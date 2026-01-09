@@ -4,12 +4,21 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install using the file
+# Install system dependencies for pandas/xml
+RUN apt-get update && apt-get install -y libxml2-dev libxslt-dev gcc && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the code
+# Create a directory for the database
+RUN mkdir /data
+
+# Copy the rest of the code
 COPY . .
+
+# Expose the port
+EXPOSE 8000
 
 # Run the API
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -32,140 +32,61 @@
     </style>
 </head>
 <body>
-    <h1 style="text-align:center">Wheel Strategy Tracker</h1>
+    <h1 style="text-align:center">Wheel Strategy Tracker version 1.0</h1>
     
-    <h2>Strategy Summary (Commission Adjusted)</h2>
+    <h2>List of Wheels</h2>
     <div id="wheel-summary-box" class="table-container"></div>
 
-    <h2>Detailed Trade History</h2>
+    <h2>Complete Trade History</h2>
     <div id="data-box" class="table-container"></div>
 
     <script>
-        function formatDate(dateStr) {
-            if (dateStr === 'Current' || !dateStr) return '⚡ Active';
-            const s = String(dateStr);
-            return s.length === 8 ? `${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}` : dateStr;
-        }
-
-        async function fetchBackendData() {
+        async function fetchAllData() {
             try {
-                const response = await fetch('http://127.0.0.1:8000/wheel');
-                const data = await response.json();
-
-                const cronTrades = [...data.trades].sort((a, b) => String(a.tradeDate).localeCompare(String(b.tradeDate)));
+                // 1. Fetch and Render Wheel Summary
+                const summaryResp = await fetch('http://127.0.0.1:8000/wheel-summary');
+                const summaryData = await summaryResp.json();
                 
-                const wheelInstances = [];
-                const lastInstanceBySymbol = {}; 
-                let globalWheelCounter = 1;
-
-                cronTrades.forEach((t) => {
-                    const sym = t.underlyingSymbol;
-                    if (!sym || t.assetCategory === 'CASH') return;
-
-                    const isNewSoldPut = (t.assetCategory === 'OPT' && t.putCall === 'P' && t.quantity < 0);
-
-                    if (isNewSoldPut) {
-                        const newIdx = wheelInstances.length;
-                        wheelInstances.push({
-                            wheelNum: globalWheelCounter++,
-                            symbol: sym,
-                            strike: t.strike,
-                            startDate: t.tradeDate,
-                            endDate: t.tradeDate,
-                            netCash: 0,
-                            totalCommissions: 0,
-                            stage: 1,
-                            callCount: 0,
-                            isOpen: false,
-                            currentValue: 0
-                        });
-                        lastInstanceBySymbol[sym] = newIdx;
-                    }
-
-                    if (lastInstanceBySymbol[sym] !== undefined) {
-                        const inst = wheelInstances[lastInstanceBySymbol[sym]];
-                        
-                        // Cash flow adjustment: Trade Value + Commission (Comm is usually negative)
-                        const tradeValue = -(t.quantity * t.tradePrice * t.multiplier);
-                        const commission = parseFloat(t.ibCommission || 0);
-                        
-                        inst.netCash += (tradeValue + commission);
-                        inst.totalCommissions += commission;
-                        inst.endDate = t.tradeDate;
-
-                        if (t.assetCategory === 'OPT' && t.putCall === 'C' && t.quantity < 0) {
-                            inst.stage = 2;
-                            inst.callCount++;
-                        }
-                    }
+                let sHtml = `<table><thead><tr><th>#</th><th>Symbol</th><th>Strike</th><th>Start</th><th>End</th><th>Comms</th><th>Net Result</th><th>Status</th></tr></thead><tbody>`;
+                summaryData.forEach(w => {
+                    // Access .value for display strings and .raw for logic
+                    sHtml += `<tr class="${w.isOpen ? 'row-active' : ''}">
+                        <td>${w.wheelNum}</td>
+                        <td><strong>${w.symbol}</strong></td>
+                        <td>${w.strike}</td>
+                        <td>${w.startDate}</td>
+                        <td>${w.isOpen ? '—' : w.endDate}</td>
+                        <td class="text-red">${w.comm.value}</td>
+                        <td class="${w.pnl.class}">${w.pnl.value}</td>
+                        <td>${w.isOpen ? 'ACTIVE' : 'CLOSED'}</td>
+                    </tr>`;
                 });
+                document.getElementById('wheel-summary-box').innerHTML = sHtml + `</tbody></table>`;
 
-                data.positions.forEach(p => {
-                    const sym = p.underlyingSymbol;
-                    if (lastInstanceBySymbol[sym] !== undefined) {
-                        const inst = wheelInstances[lastInstanceBySymbol[sym]];
-                        inst.currentValue = (p.position * p.markPrice * p.multiplier);
-                        inst.isOpen = true;
-                    }
+                // 2. Fetch and Render Complete History
+                const historyResp = await fetch('http://127.0.0.1:8000/history');
+                const historyData = await historyResp.json();
+                
+                let hHtml = `<table><thead><tr><th>Date</th><th>Symbol</th><th>Details</th><th>Qty</th><th>Price</th><th>Comm</th></tr></thead><tbody>`;
+                historyData.forEach(item => {
+                    // Item.price is already a string "$0.00" or float based on your backend formatting
+                    hHtml += `<tr>
+                        <td>${item.date}</td>
+                        <td><strong>${item.symbol}</strong></td>
+                        <td class="asset-details">${item.details}</td>
+                        <td class="${item.qty < 0 ? 'text-red' : 'text-green'}">${item.qty}</td>
+                        <td>${item.price}</td>
+                        <td class="text-red">${item.comm.raw !== 0 ? item.comm.value : '—'}</td>
+                    </tr>`;
                 });
+                document.getElementById('data-box').innerHTML = hHtml + `</tbody></table>`;
 
-                let wheelHTML = `<table>
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Symbol</th>
-                            <th>Strike</th>
-                            <th>Start Date</th>
-                            <th>End Date</th>
-                            <th>Comms</th>
-                            <th>Net Result</th>
-                            <th>Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>`;
-
-                [...wheelInstances].reverse().forEach(w => {
-                    const totalPnL = w.netCash + w.currentValue;
-                    wheelHTML += `
-                        <tr class="${w.isOpen ? 'row-active' : ''}">
-                            <td>${w.wheelNum}</td>
-                            <td><strong>${w.symbol}</strong></td>
-                            <td>$${w.strike}</td>
-                            <td>${formatDate(w.startDate)}</td>
-                            <td>${w.isOpen ? '—' : formatDate(w.endDate)}</td>
-                            <td class="text-red">$${Math.abs(w.totalCommissions).toFixed(2)}</td>
-                            <td class="${totalPnL >= 0 ? 'text-green' : 'text-red'}">$${totalPnL.toFixed(2)}</td>
-                            <td>${w.isOpen ? 'ACTIVE' : 'CLOSED'}</td>
-                        </tr>`;
-                });
-                document.getElementById('wheel-summary-box').innerHTML = wheelHTML + `</tbody></table>`;
-
-                renderHistory(data);
-            } catch (e) { console.error("Error:", e); }
+            } catch (e) { 
+                console.error("API Error:", e);
+                document.getElementById('wheel-summary-box').innerHTML = `<p style="padding:20px; color:red;">Failed to connect to backend. Is it running?</p>`;
+            }
         }
-
-        function renderHistory(data) {
-            const allEvents = [
-                ...data.trades.map(t => ({ ...t, displayDate: t.tradeDate, eventType: 'TRADE', displayQty: t.quantity })),
-                ...data.positions.map(p => ({ ...p, displayDate: 'Current', eventType: 'OPEN POSITION', displayQty: p.position, tradePrice: p.markPrice }))
-            ].sort((a, b) => String(b.displayDate).localeCompare(String(a.displayDate)));
-
-            let html = `<table><thead><tr><th>Date</th><th>Symbol</th><th>Details</th><th>Qty</th><th>Price</th><th>Comm</th></tr></thead><tbody>`;
-            allEvents.forEach(item => {
-                const details = item.strike ? `${item.strike} ${item.putCall} (${item.expiry})` : (item.assetCategory || 'STOCK');
-                const comm = item.ibCommission ? parseFloat(item.ibCommission).toFixed(2) : '—';
-                html += `<tr>
-                    <td>${formatDate(item.displayDate)}</td>
-                    <td><strong>${item.underlyingSymbol || ''}</strong></td>
-                    <td class="asset-details">${details}</td>
-                    <td class="${item.displayQty < 0 ? 'text-red' : 'text-green'}">${item.displayQty}</td>
-                    <td>$${(item.tradePrice || 0).toFixed(2)}</td>
-                    <td class="text-red">${comm}</td>
-                </tr>`;
-            });
-            document.getElementById('data-box').innerHTML = html + `</tbody></table>`;
-        }
-        fetchBackendData();
+        fetchAllData();
     </script>
 </body>
 </html>
