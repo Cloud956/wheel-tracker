@@ -15,7 +15,18 @@ except ImportError:
 
 TOKEN = os.getenv("IBKR_TOKEN")
 QUERY_ID = os.getenv("IBKR_QUERY_ID")
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI()
+
+# Paste this block here:
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows your React app
+    allow_credentials=True,
+    allow_methods=["*"],                      # Allows all actions (GET, POST, etc.)
+    allow_headers=["*"],                      # Allows all headers
+)
 VERSION = "3"
 SEND_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest"
 GET_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement"
