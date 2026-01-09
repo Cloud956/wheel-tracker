@@ -2,46 +2,170 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hello World</title>
+    <title>Wheel Strategy Tracker</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            display: flex;
-            justify-content: center;
-            align-items: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            font-family: 'Segoe UI', sans-serif;
+            color: #ffffff;
+            padding: 40px 20px;
         }
-        
-        h1 {
-            font-size: 6rem;
-            color: white;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-            animation: fadeIn 1s ease-in;
+        h2 { text-align: center; margin: 30px 0 20px; color: #4ecca3; font-weight: 300; }
+        .table-container {
+            width: 100%; max-width: 1400px;
+            margin: 0 auto 50px auto;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
-        
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background-color: #4ecca3; color: #1a1a2e; padding: 15px; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 1px; }
+        td { padding: 15px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: 0.9rem; }
+        .text-green { color: #2ecc71; font-weight: bold; }
+        .text-red { color: #e74c3c; font-weight: bold; }
+        .row-active { background: rgba(78, 204, 163, 0.12); border-left: 4px solid #4ecca3; }
+        .asset-details { font-size: 0.8rem; color: #a0a0a0; }
     </style>
 </head>
 <body>
-    <h1>Hello World</h1>
+    <h1 style="text-align:center">Wheel Strategy Tracker</h1>
+    
+    <h2>Strategy Summary (Commission Adjusted)</h2>
+    <div id="wheel-summary-box" class="table-container"></div>
+
+    <h2>Detailed Trade History</h2>
+    <div id="data-box" class="table-container"></div>
+
+    <script>
+        function formatDate(dateStr) {
+            if (dateStr === 'Current' || !dateStr) return '⚡ Active';
+            const s = String(dateStr);
+            return s.length === 8 ? `${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}` : dateStr;
+        }
+
+        async function fetchBackendData() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/wheel');
+                const data = await response.json();
+
+                const cronTrades = [...data.trades].sort((a, b) => String(a.tradeDate).localeCompare(String(b.tradeDate)));
+                
+                const wheelInstances = [];
+                const lastInstanceBySymbol = {}; 
+                let globalWheelCounter = 1;
+
+                cronTrades.forEach((t) => {
+                    const sym = t.underlyingSymbol;
+                    if (!sym || t.assetCategory === 'CASH') return;
+
+                    const isNewSoldPut = (t.assetCategory === 'OPT' && t.putCall === 'P' && t.quantity < 0);
+
+                    if (isNewSoldPut) {
+                        const newIdx = wheelInstances.length;
+                        wheelInstances.push({
+                            wheelNum: globalWheelCounter++,
+                            symbol: sym,
+                            strike: t.strike,
+                            startDate: t.tradeDate,
+                            endDate: t.tradeDate,
+                            netCash: 0,
+                            totalCommissions: 0,
+                            stage: 1,
+                            callCount: 0,
+                            isOpen: false,
+                            currentValue: 0
+                        });
+                        lastInstanceBySymbol[sym] = newIdx;
+                    }
+
+                    if (lastInstanceBySymbol[sym] !== undefined) {
+                        const inst = wheelInstances[lastInstanceBySymbol[sym]];
+                        
+                        // Cash flow adjustment: Trade Value + Commission (Comm is usually negative)
+                        const tradeValue = -(t.quantity * t.tradePrice * t.multiplier);
+                        const commission = parseFloat(t.ibCommission || 0);
+                        
+                        inst.netCash += (tradeValue + commission);
+                        inst.totalCommissions += commission;
+                        inst.endDate = t.tradeDate;
+
+                        if (t.assetCategory === 'OPT' && t.putCall === 'C' && t.quantity < 0) {
+                            inst.stage = 2;
+                            inst.callCount++;
+                        }
+                    }
+                });
+
+                data.positions.forEach(p => {
+                    const sym = p.underlyingSymbol;
+                    if (lastInstanceBySymbol[sym] !== undefined) {
+                        const inst = wheelInstances[lastInstanceBySymbol[sym]];
+                        inst.currentValue = (p.position * p.markPrice * p.multiplier);
+                        inst.isOpen = true;
+                    }
+                });
+
+                let wheelHTML = `<table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Symbol</th>
+                            <th>Strike</th>
+                            <th>Start Date</th>
+                            <th>End Date</th>
+                            <th>Comms</th>
+                            <th>Net Result</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+                [...wheelInstances].reverse().forEach(w => {
+                    const totalPnL = w.netCash + w.currentValue;
+                    wheelHTML += `
+                        <tr class="${w.isOpen ? 'row-active' : ''}">
+                            <td>${w.wheelNum}</td>
+                            <td><strong>${w.symbol}</strong></td>
+                            <td>$${w.strike}</td>
+                            <td>${formatDate(w.startDate)}</td>
+                            <td>${w.isOpen ? '—' : formatDate(w.endDate)}</td>
+                            <td class="text-red">$${Math.abs(w.totalCommissions).toFixed(2)}</td>
+                            <td class="${totalPnL >= 0 ? 'text-green' : 'text-red'}">$${totalPnL.toFixed(2)}</td>
+                            <td>${w.isOpen ? 'ACTIVE' : 'CLOSED'}</td>
+                        </tr>`;
+                });
+                document.getElementById('wheel-summary-box').innerHTML = wheelHTML + `</tbody></table>`;
+
+                renderHistory(data);
+            } catch (e) { console.error("Error:", e); }
+        }
+
+        function renderHistory(data) {
+            const allEvents = [
+                ...data.trades.map(t => ({ ...t, displayDate: t.tradeDate, eventType: 'TRADE', displayQty: t.quantity })),
+                ...data.positions.map(p => ({ ...p, displayDate: 'Current', eventType: 'OPEN POSITION', displayQty: p.position, tradePrice: p.markPrice }))
+            ].sort((a, b) => String(b.displayDate).localeCompare(String(a.displayDate)));
+
+            let html = `<table><thead><tr><th>Date</th><th>Symbol</th><th>Details</th><th>Qty</th><th>Price</th><th>Comm</th></tr></thead><tbody>`;
+            allEvents.forEach(item => {
+                const details = item.strike ? `${item.strike} ${item.putCall} (${item.expiry})` : (item.assetCategory || 'STOCK');
+                const comm = item.ibCommission ? parseFloat(item.ibCommission).toFixed(2) : '—';
+                html += `<tr>
+                    <td>${formatDate(item.displayDate)}</td>
+                    <td><strong>${item.underlyingSymbol || ''}</strong></td>
+                    <td class="asset-details">${details}</td>
+                    <td class="${item.displayQty < 0 ? 'text-red' : 'text-green'}">${item.displayQty}</td>
+                    <td>$${(item.tradePrice || 0).toFixed(2)}</td>
+                    <td class="text-red">${comm}</td>
+                </tr>`;
+            });
+            document.getElementById('data-box').innerHTML = html + `</tbody></table>`;
+        }
+        fetchBackendData();
+    </script>
 </body>
 </html>
-
-
