@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -8,8 +9,16 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Check if dist directory exists
+const distPath = path.join(__dirname, 'dist');
+if (!existsSync(distPath)) {
+  console.error('ERROR: dist directory does not exist!');
+  console.error('Please run "npm run build" first.');
+  process.exit(1);
+}
+
 // Serve static files from the dist directory (built React app)
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(distPath));
 
 // API proxy for development/production
 const API_BASE = process.env.API_BASE || 'http://localhost:8000';
