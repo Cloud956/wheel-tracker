@@ -1,0 +1,20 @@
+# Development Dockerfile for frontend with hot-reload
+FROM node:lts-alpine
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy package.json and package-lock.json to the working directory
+COPY package*.json ./
+
+# Install the application dependencies (including dev dependencies)
+RUN npm install
+
+# Expose the port Vite dev server runs on
+EXPOSE 3000
+
+# Command to run the Vite dev server with host binding for Docker
+# Using sh -c to ensure the command runs correctly even with volume mounts
+# The --host flag is already in vite.config.js, but we keep it here as backup
+CMD ["sh", "-c", "npm run dev -- --host 0.0.0.0 --port 3000"]
+
