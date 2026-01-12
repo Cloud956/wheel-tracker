@@ -3,8 +3,8 @@ import WheelSummaryTable from './components/WheelSummaryTable'
 import TradeHistoryTable from './components/TradeHistoryTable'
 import './App.css'
 
+// FIXED: Use localhost instead of 0.0.0.0
 const API_BASE = 'http://localhost:8000' 
-
 
 function App() {
   const [wheelSummary, setWheelSummary] = useState([])
@@ -37,7 +37,7 @@ function App() {
       setTradeHistory(historyData)
     } catch (e) {
       console.error('API Error:', e)
-      setError('Failed to connect to backend. Is it running on port 8000?')
+      setError(`Failed to connect to backend at ${API_BASE}. Is it running?`)
     } finally {
       setLoading(false)
     }
