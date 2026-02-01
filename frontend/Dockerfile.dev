@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install the application dependencies (including dev dependencies)
-RUN npm install
+RUN npm install --verbose
 
 # Expose the port Vite dev server runs on
 EXPOSE 3000
