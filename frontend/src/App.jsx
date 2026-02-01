@@ -1,71 +1,78 @@
 import React, { useState, useEffect } from 'react';
-import WheelSummaryTable from './components/WheelSummaryTable';
-import TradeHistoryTable from './components/TradeHistoryTable';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import Cookies from 'js-cookie';
 import Login from './components/logins/login';
-import Logout from './components/logins/logout';
+import Dashboard from './components/Dashboard';
+import AccountSettings from './components/AccountSettings';
 import './App.css';
 
-// Use localhost instead of 0.0.0.0
-const API_BASE = 'http://localhost:8000';
-
 function App() {
-  const [wheelSummary, setWheelSummary] = useState([]);
-  const [tradeHistory, setTradeHistory] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
-    fetchAllData();
+    // Check if user is already logged in by checking the cookie
+    const token = Cookies.get("token");
+    if (token) {
+      setIsAuthenticated(true);
+    }
   }, []);
 
-  const fetchAllData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      const [summaryResp, historyResp] = await Promise.all([
-        fetch(`${API_BASE}/wheel-summary`),
-        fetch(`${API_BASE}/history`)
-      ]);
-
-      if (!summaryResp.ok || !historyResp.ok) {
-        throw new Error('Failed to fetch data from backend');
-      }
-
-      const summaryData = await summaryResp.json();
-      const historyData = await historyResp.json();
-
-      setWheelSummary(summaryData);
-      setTradeHistory(historyData);
-    } catch (e) {
-      console.error('API Error:', e);
-      setError(`Failed to connect to backend at ${API_BASE}. Is it running?`);
-    } finally {
-      setLoading(false);
-    }
+  const handleLoginSuccess = (credential) => {
+    // In a real app, you'd verify the token with backend here
+    // For now, we assume success if we get a credential
+    // Store token in a cookie that expires in 7 days
+    Cookies.set("token", credential, { expires: 7 });
+    setIsAuthenticated(true);
   };
 
-  if (loading) {
-    return <div className="loading">Loading data...</div>;
-  }
-
-  if (error) {
-    return <div className="error">{error}</div>;
-  }
+  const handleLogout = () => {
+    Cookies.remove("token");
+    setIsAuthenticated(false);
+  };
 
   return (
-    <div className="app">
-      <h1>Wheel Strategy Tracker version 1.0</h1>
-
-      <Login />
-      <Logout />
-
-      <h2>List of Wheels</h2>
-      <WheelSummaryTable data={wheelSummary} />
-
-      <h2>Complete Trade History</h2>
-      <TradeHistoryTable data={tradeHistory} />
-    </div>
+    <Router>
+      <div className="app">
+        <Routes>
+          <Route 
+            path="/login" 
+            element={
+              !isAuthenticated ? (
+                <div className="login-page">
+                    <h1>Wheel Strategy Tracker Login</h1>
+                    <div className="login-wrapper">
+                        <Login onLoginSuccess={handleLoginSuccess} />
+                    </div>
+                </div>
+              ) : (
+                <Navigate to="/dashboard" replace />
+              )
+            } 
+          />
+          <Route 
+            path="/dashboard" 
+            element={
+              isAuthenticated ? (
+                <Dashboard onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            } 
+          />
+          <Route 
+            path="/settings" 
+            element={
+              isAuthenticated ? (
+                <AccountSettings onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            } 
+          />
+          <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />} />
+        </Routes>
+      </div>
+    </Router>
   );
 }
 
