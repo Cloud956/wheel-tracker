@@ -13,6 +13,8 @@ function Dashboard({ onLogout }) {
   const [tradeHistory, setTradeHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [syncResults, setSyncResults] = useState(null);
+  const [syncing, setSyncing] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -64,6 +66,35 @@ function Dashboard({ onLogout }) {
     }
   };
 
+  const handleSync = async () => {
+    try {
+      setSyncing(true);
+      setSyncResults(null); 
+      const token = Cookies.get("token");
+      if (!token) throw new Error("No authentication token found");
+
+      const response = await fetch(`${API_BASE}/sync`, { 
+        headers: { 'Authorization': `Bearer ${token}` } 
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+      
+      const data = await response.json();
+      if (!response.ok) {
+        alert("Sync Failed: " + (data.detail || "Unknown error"));
+      } else {
+        setSyncResults(data);
+      }
+    } catch (e) {
+      alert("Sync Error: " + e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   if (loading) {
     return <div className="loading">Loading data...</div>;
   }
@@ -77,10 +108,59 @@ function Dashboard({ onLogout }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1>Wheel Strategy Tracker version 1.0</h1>
           <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn" onClick={handleSync} disabled={syncing}>
+                {syncing ? 'Syncing...' : 'Sync IBKR'}
+              </button>
               <button className="btn btn-settings" onClick={() => navigate('/settings')}>Settings</button>
               <Logout onLogout={onLogout} />
           </div>
       </div>
+
+      {syncResults && (
+        <div style={{ padding: '20px', background: '#f5f5f5', margin: '20px 0', border: '1px solid #ddd', color: '#333' }}>
+          <h3 style={{color: '#333'}}>Sync Results (Categorization Test)</h3>
+          <p style={{color: '#333'}}>Status: {syncResults.status}</p>
+          <p style={{color: '#333'}}>Count: {syncResults.count}</p>
+          {syncResults.categorized_trades && syncResults.categorized_trades.length > 0 ? (
+            <table className="summary-table" style={{ width: '100%', fontSize: '0.9em', color: '#111' }}>
+              <thead>
+                <tr style={{background: '#e0e0e0', color: '#000'}}>
+                  <th style={{padding: '8px', textAlign: 'left'}}>Date</th>
+                  <th style={{padding: '8px', textAlign: 'left'}}>Symbol</th>
+                  <th style={{padding: '8px', textAlign: 'left'}}>Category</th>
+                  <th style={{padding: '8px', textAlign: 'left'}}>Action Needed</th>
+                  <th style={{padding: '8px', textAlign: 'left'}}>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {syncResults.categorized_trades.map((t, i) => (
+                  <tr key={i} style={{borderBottom: '1px solid #ddd', background: i % 2 === 0 ? '#fff' : '#f9f9f9'}}>
+                    <td style={{padding: '8px', color: '#333'}}>{t.date.split('T')[0]}</td>
+                    <td style={{padding: '8px', color: '#333'}}>{t.symbol}</td>
+                    <td style={{padding: '8px', color: '#333'}}><b>{t.action}</b></td>
+                    <td style={{padding: '8px', color: '#333'}}>
+                      <span style={{
+                        padding: '4px 8px', 
+                        borderRadius: '4px',
+                        background: t.suggested_action === 'Start New Wheel' ? '#d4edda' :
+                                    t.suggested_action === 'Close Open Wheel' ? '#f8d7da' : '#fff3cd',
+                        color: t.suggested_action === 'Start New Wheel' ? '#155724' :
+                               t.suggested_action === 'Close Open Wheel' ? '#721c24' : '#856404'
+                      }}>
+                        {t.suggested_action}
+                      </span>
+                    </td>
+                    <td style={{padding: '8px', color: '#333'}}>{t.details}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p style={{color: '#333'}}>No new trades found to categorize.</p>
+          )}
+          <button onClick={() => setSyncResults(null)} style={{marginTop: '10px'}}>Close Results</button>
+        </div>
+      )}
 
       <h2>List of Wheels</h2>
       <WheelSummaryTable data={wheelSummary} />
