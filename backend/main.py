@@ -109,7 +109,7 @@ def sync_data(user: dict = Depends(verify_token)):
              return {"status": "success", "message": "No trades found in Flex Report", "categorized_trades": []}
 
         # Filter out ignored symbols
-        IGNORED_SYMBOLS = ["GOOGL", "ABN"] # Add any others here
+        IGNORED_SYMBOLS = [ "ABN"] # Add any others here
         if 'underlyingSymbol' in df_trades.columns:
             df_trades = df_trades[~df_trades['underlyingSymbol'].isin(IGNORED_SYMBOLS)]
         
