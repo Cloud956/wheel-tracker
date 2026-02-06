@@ -34,119 +34,134 @@ class CategorizedTrade(BaseModel):
 def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
     """
     Categorizes a list of trades into the 6 detected actions.
-    Consumes Stock trades into Assignments where applicable, preventing duplicate display.
+    Logic:
+    1. Collect trades into buckets.
+    2. Create initial categorizations (Basic types).
+    3. Run logic pass to detect assignments and link trades.
     """
-    # Sort trades by time to ensure correct window matching
+    # Sort trades by time to ensure correct processing order if needed later
     sorted_trades = sorted(trades, key=lambda t: t.datetime)
     
-    # Pre-pass: Identify Assignments and mark Stock trades as consumed
-    consumed_stock_trades = set()
-    pre_calculated_categories = {} # Map trade_id -> (ActionType, related_id)
-
-    for i, trade in enumerate(sorted_trades):
-        if trade.asset_category != 'OPT' or trade.quantity <= 0:
-            continue
-            
-        # It's an Option BUY (Closing/Assignment Check)
-        # We need to search for a related stock trade
-        
-        if trade.put_call == 'P':
-            window = timedelta(minutes=15)
-            target_stock_qty_sign = 1 
-        else: # Call
-            window = timedelta(minutes=10)
-            target_stock_qty_sign = -1 
-        
-        matching_stock_trade = None
-        
-        # Check previous trades
-        for j in range(i - 1, -1, -1):
-            other = sorted_trades[j]
-            if (trade.datetime - other.datetime) > window:
-                break 
-            
-            if (other.asset_category == 'STK' and 
-                other.symbol == trade.symbol and 
-                other.trade_id not in consumed_stock_trades):
-                
-                if (target_stock_qty_sign > 0 and other.quantity > 0) or \
-                   (target_stock_qty_sign < 0 and other.quantity < 0):
-                    matching_stock_trade = other
-                    break
-        
-        # Check future trades (if not found yet)
-        if not matching_stock_trade:
-            for j in range(i + 1, len(sorted_trades)):
-                other = sorted_trades[j]
-                if (other.datetime - trade.datetime) > window:
-                    break 
-                
-                if (other.asset_category == 'STK' and 
-                    other.symbol == trade.symbol and 
-                    other.trade_id not in consumed_stock_trades):
-                    
-                    if (target_stock_qty_sign > 0 and other.quantity > 0) or \
-                       (target_stock_qty_sign < 0 and other.quantity < 0):
-                        matching_stock_trade = other
-                        break
-        
-        if matching_stock_trade:
-            related_id = matching_stock_trade.trade_id
-            consumed_stock_trades.add(related_id)
-            
-            if trade.put_call == 'P':
-                cat = ActionType.ASSIGNMENT_PUT
-            else: 
-                cat = ActionType.ASSIGNMENT_CALL
-                
-            pre_calculated_categories[trade.trade_id] = (cat, related_id)
-        else:
-            if trade.put_call == 'P':
-                cat = ActionType.CLOSE_WHEEL_PUT
-            else:
-                cat = ActionType.CLOSE_CALL
-            pre_calculated_categories[trade.trade_id] = (cat, None)
-
-
-    # Final Pass: Generate Results
-    categorized_results = []
+    puts_sold: List[Trade] = []
+    puts_bought: List[Trade] = []
+    calls_sold: List[Trade] = []
+    calls_bought: List[Trade] = []
+    shares_trades: List[Trade] = [] # Only multiples of 100
+    others: List[Trade] = []
     
+    # 1. Bucket Trades
     for trade in sorted_trades:
-        # If it's a Stock trade that was consumed, skip it
-        if trade.asset_category != 'OPT' and trade.trade_id in consumed_stock_trades:
+        if trade.asset_category == 'OPT':
+            if trade.put_call == 'P':
+                if trade.quantity < 0:
+                    puts_sold.append(trade)
+                else:
+                    puts_bought.append(trade)
+            elif trade.put_call == 'C':
+                if trade.quantity < 0:
+                    calls_sold.append(trade)
+                else:
+                    calls_bought.append(trade)
+            else:
+                others.append(trade)
+        elif trade.asset_category == 'STK':
+            if abs(trade.quantity) >= 100 and abs(trade.quantity) % 100 == 0:
+                shares_trades.append(trade)
+            else:
+                others.append(trade)
+        else:
+            others.append(trade)
+
+    initial_results: List[CategorizedTrade] = []
+    
+    # 2. Initial Basic Categorization
+    for t in puts_sold:
+        initial_results.append(CategorizedTrade(trade=t, category=ActionType.OPEN_WHEEL))
+    for t in puts_bought:
+        initial_results.append(CategorizedTrade(trade=t, category=ActionType.CLOSE_WHEEL_PUT))
+    for t in calls_sold:
+        initial_results.append(CategorizedTrade(trade=t, category=ActionType.SELL_COVERED_CALL))
+    for t in calls_bought:
+        initial_results.append(CategorizedTrade(trade=t, category=ActionType.CLOSE_CALL))
+    for t in shares_trades:
+        cat = ActionType.STOCK_BUY if t.quantity > 0 else ActionType.STOCK_SELL
+        initial_results.append(CategorizedTrade(trade=t, category=cat))
+    for t in others:
+        initial_results.append(CategorizedTrade(trade=t, category=ActionType.UNCATEGORIZED))
+
+    # 3. Logic Pass: Detect Assignments
+    final_results: List[CategorizedTrade] = []
+    consumed_trade_ids = set()
+    
+    # Sort initial results by time to help window matching
+    initial_results.sort(key=lambda x: x.trade.datetime)
+    
+    window = timedelta(minutes=10)
+
+    for i, cat_trade in enumerate(initial_results):
+        if cat_trade.trade.trade_id in consumed_trade_ids:
             continue
             
-        if trade.asset_category != 'OPT':
-            # Standalone Stock Trade
-            if trade.quantity > 0:
-                cat = ActionType.STOCK_BUY
-            else:
-                cat = ActionType.STOCK_SELL
-            categorized_results.append(CategorizedTrade(trade=trade, category=cat))
-            continue
-
-        # Opt Trade
-        if trade.quantity < 0:
-            # Opening Trades (Sell)
-            if trade.put_call == 'P':
-                category = ActionType.OPEN_WHEEL
-            elif trade.put_call == 'C':
-                category = ActionType.SELL_COVERED_CALL
-            else:
-                category = ActionType.UNCATEGORIZED
-            related_id = None
-        else:
-            # Closing Trades (Buy) - Use pre-calculated
-            if trade.trade_id in pre_calculated_categories:
-                category, related_id = pre_calculated_categories[trade.trade_id]
-            else:
-                category = ActionType.UNCATEGORIZED
-                related_id = None
-
-        categorized_results.append(CategorizedTrade(
-            trade=trade, 
-            category=category, 
-            related_trade_id=related_id
-        ))
+        match = None
         
-    return categorized_results
+        # Logic for Put Assignment: Bought Put + Bought Shares
+        if cat_trade.category == ActionType.CLOSE_WHEEL_PUT:
+            # Search for a matching Stock Buy
+            for other in initial_results:
+                if other.trade.trade_id == cat_trade.trade.trade_id:
+                    continue
+                if other.trade.trade_id in consumed_trade_ids:
+                    continue
+                
+                if other.category == ActionType.STOCK_BUY:
+                    if other.trade.symbol == cat_trade.trade.symbol:
+                        if abs(other.trade.datetime - cat_trade.trade.datetime) <= window:
+                            match = other
+                            break
+            
+            if match:
+                cat_trade.category = ActionType.ASSIGNMENT_PUT
+                cat_trade.related_trade_id = match.trade.trade_id
+                consumed_trade_ids.add(match.trade.trade_id)
+
+        # Logic for Call Assignment: Bought Call + Sold Shares
+        elif cat_trade.category == ActionType.CLOSE_CALL:
+            # Search for a matching Stock Sell
+            for other in initial_results:
+                if other.trade.trade_id == cat_trade.trade.trade_id:
+                    continue
+                if other.trade.trade_id in consumed_trade_ids:
+                    continue
+                
+                if other.category == ActionType.STOCK_SELL:
+                    if other.trade.symbol == cat_trade.trade.symbol:
+                        if abs(other.trade.datetime - cat_trade.trade.datetime) <= window:
+                            match = other
+                            break
+            
+            if match:
+                cat_trade.category = ActionType.ASSIGNMENT_CALL
+                cat_trade.related_trade_id = match.trade.trade_id
+                consumed_trade_ids.add(match.trade.trade_id)
+        
+        final_results.append(cat_trade)
+    
+    # Filter out consumed trades AND unwanted categories from final results
+    # Exclude UNCATEGORIZED and standalone STOCK_BUY/STOCK_SELL
+    allowed_categories = {
+        ActionType.OPEN_WHEEL,
+        ActionType.CLOSE_WHEEL_PUT,
+        ActionType.ASSIGNMENT_PUT,
+        ActionType.SELL_COVERED_CALL,
+        ActionType.CLOSE_CALL,
+        ActionType.ASSIGNMENT_CALL
+    }
+    
+    filtered_results = []
+    for t in final_results:
+        if t.trade.trade_id in consumed_trade_ids:
+            continue
+        if t.category in allowed_categories:
+            filtered_results.append(t)
+            
+    return filtered_results
