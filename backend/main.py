@@ -9,8 +9,10 @@ import time
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_user_config
-from trade_categorizer import categorize_trades, Trade, ActionType
+from database import get_user_config, save_wheels, get_wheels
+from trade_categorizer import categorize_trades, fetch_and_parse_trades
+from models import Trade, ActionType
+from wheel_analyzer import analyze_wheels, identify_new_wheels, merge_new_wheels
 
 load_dotenv()
 app = FastAPI()
@@ -25,57 +27,6 @@ app.add_middleware(
 
 # Include routers
 app.include_router(account.router)
-
-def fetch_flex_data(token, query_id):
-    send_url = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest"
-    get_url = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement"
-    
-    # Send Request
-    resp = requests.get(send_url, params={'t': token, 'q': query_id, 'v': "3"})
-    if "<ReferenceCode>" not in resp.text:
-        error_msg = f"IBKR Flex Request Failed. Response: {resp.text[:200]}"
-        print(error_msg)
-        raise HTTPException(status_code=500, detail=error_msg)
-    
-    ref_code = resp.text.split("<ReferenceCode>")[1].split("</ReferenceCode>")[0]
-    
-    # Wait for report generation
-    # IBKR documentation recommends retrying with exponential backoff
-    retry_count = 0
-    max_retries = 20
-    xml_content = None
-    
-    while retry_count < max_retries:
-        sleep_time = 2 + (retry_count * 3) # Increases wait time
-        print(f"Waiting {sleep_time}s for Flex Report (Attempt {retry_count+1}/{max_retries})...")
-        time.sleep(sleep_time)
-        
-        report_resp = requests.get(get_url, params={'t': token, 'q': ref_code, 'v': "3"})
-        
-        # Check for success indicators
-        if "<FlexStatement" in report_resp.text: # <FlexStatement> is standard root or child
-            xml_content = report_resp.text
-            break
-            
-        if "<ErrorCode>" in report_resp.text:
-            # If it's just 'Statement generation in progress', we continue
-            if "1019" in report_resp.text: # Code for 'Statement generation in progress'
-                print("Report generation in progress...")
-                pass
-            else:
-                # Real error output for debugging
-                print(f"Flex Query Fatal Error: {report_resp.text}")
-                break
-        else:
-             # Weird state or just empty
-             print(f"Unexpected Response: {report_resp.text[:200]}")
-        
-        retry_count += 1
-        
-    if not xml_content:
-        raise HTTPException(status_code=500, detail="Failed to retrieve Flex Report after retries")
-        
-    return xml_content
 
 @app.get("/sync")
 def sync_data(user: dict = Depends(verify_token)):
@@ -93,65 +44,29 @@ def sync_data(user: dict = Depends(verify_token)):
     if not ibkr_token or not ibkr_query_id:
         raise HTTPException(status_code=400, detail="IBKR credentials (token/query_id) not configured")
         
-    # 2. Run Flex Query
+    # 2. Run Flex Query & Parse Data
     try:
-        xml_content = fetch_flex_data(ibkr_token, ibkr_query_id)
-    except Exception as e:
-        print(f"Flex Fetch Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error fetching data from IBKR: {str(e)}")
-
-    # 3. Parse Data and Convert to Trade objects
-    try:
-        # Use pandas to parse XML
-        df_trades = pd.read_xml(io.StringIO(xml_content), xpath=".//Trade")
+        trades_list = fetch_and_parse_trades(ibkr_token, ibkr_query_id)
         
-        if df_trades.empty:
+        if not trades_list:
              return {"status": "success", "message": "No trades found in Flex Report", "categorized_trades": []}
 
-        # Filter out ignored symbols
-        IGNORED_SYMBOLS = [ "ABN"] # Add any others here
-        if 'underlyingSymbol' in df_trades.columns:
-            df_trades = df_trades[~df_trades['underlyingSymbol'].isin(IGNORED_SYMBOLS)]
-        
-        # Convert DataFrame to List[Trade]
-        trades_list = []
-        for _, row in df_trades.iterrows():
-            try:
-                d_str = str(row.get('tradeDate', ''))
-                t_str = str(row.get('tradeTime', '000000')) # Default if missing
-                
-                date_part = datetime.strptime(d_str, "%Y%m%d")
-                
-                if ':' in t_str and len(t_str) >= 5:
-                    time_part = datetime.strptime(t_str, "%H:%M:%S").time()
-                    dt = datetime.combine(date_part.date(), time_part)
-                else:
-                    dt = date_part 
-            except Exception:
-                dt = datetime.now() 
-            
-            # Create Unique ID
-            # Append asset type to ensure uniqueness if IBKR reuses IDs for assignment legs
-            raw_id = str(row.get('transactionID', f"{row.get('tradeDate')}-{row.get('tradeTime')}-{row.get('symbol')}"))
-            asset_cat = str(row.get('assetCategory', 'UNKNOWN'))
-            unique_id = f"{raw_id}_{asset_cat}"
-
-            trade = Trade(
-                trade_id=unique_id, 
-                symbol=str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN'))),
-                asset_category=asset_cat,
-                put_call=str(row.get('putCall')) if pd.notna(row.get('putCall')) else None,
-                quantity=float(row.get('quantity', 0)),
-                trade_price=float(row.get('tradePrice', 0)),
-                datetime=dt,
-                description=str(row.get('description', ''))
-            )
-            trades_list.append(trade)
-            
-        # 4. Categorize Data
+        # 3. Categorize Data
         categorized = categorize_trades(trades_list)
         
-        # 5. Return Results
+        # 4. Identify New Wheels
+        new_wheels = identify_new_wheels(categorized, email)
+        
+        # 5. Merge New Wheels with Existing
+        wheels = merge_new_wheels(new_wheels, get_wheels(email))
+        
+        # 6. Save Wheels to DynamoDB
+        # We convert the Pydantic models to dicts for saving
+        # The database module handles type conversion (datetime->str, float->Decimal)
+        wheels_data = [w.dict() for w in wheels]
+        save_wheels(email, wheels_data)
+        
+        # 4. Return Results
         results = []
         
         # Helper to find trade by ID
@@ -200,42 +115,47 @@ def sync_data(user: dict = Depends(verify_token)):
 
 @app.get("/wheel-summary")
 def get_wheel_summary(user: dict = Depends(verify_token)):
-    # Fake wheel summary data
-    return [
-        {
-            "wheelNum": 3,
-            "symbol": "FAKE",
-            "strike": "$150.0",
-            "startDate": "2023-11-01",
-            "endDate": "2023-12-01",
-            "netCash": 120.50,
-            "isOpen": False,
-            "pnl": format_currency(120.50),
-            "comm": format_currency(2.50)
-        },
-        {
-            "wheelNum": 2,
-            "symbol": "TEST",
-            "strike": "$100.0",
-            "startDate": "2023-10-15",
-            "endDate": "2023-11-15",
-            "netCash": -50.00,
-            "isOpen": True,
-            "pnl": format_currency(-50.00),
-            "comm": format_currency(1.25)
-        },
-        {
-            "wheelNum": 1,
-            "symbol": "DEMO",
-            "strike": "$25.0",
-            "startDate": "2023-09-01",
-            "endDate": "2023-10-01",
-            "netCash": 450.00,
-            "isOpen": False,
-            "pnl": format_currency(450.00),
-            "comm": format_currency(5.00)
-        }
-    ]
+    email = user.get('email')
+    
+    # Fetch real wheels from DynamoDB (Returns List[Wheel])
+    wheels_data = get_wheels(email)
+    
+    summary = []
+    # Sort by start date descending
+    wheels_data.sort(key=lambda x: x.start_date, reverse=True)
+    
+    for idx, w in enumerate(wheels_data):
+        total_pnl = w.total_pnl
+        total_comm = w.total_commissions
+        
+        # Parse dates for cleaner display
+        s_date = w.start_date.isoformat().split('T')[0]
+        e_date = w.end_date.isoformat().split('T')[0] if w.end_date else 'Open'
+        
+            
+        summary.append({
+            "wheelNum": len(wheels_data) - idx, # Reverse count
+            "symbol": w.symbol,
+            "strike": w.strike,
+            "startDate": s_date,
+            "endDate": e_date,
+            "netCash": total_pnl, # PnL is essentially net cash flow in this model
+            "isOpen": w.is_open,
+            "pnl": format_currency(total_pnl),
+            "comm": format_currency(total_comm),
+            "trades": [
+                {
+                    "date": t.trade.datetime.isoformat().split('T')[0],
+                    "details": t.trade.description or f"{t.trade.quantity} @ {t.trade.trade_price}",
+                    "action": t.category.value,
+                    "price": format_currency(t.trade.trade_price),
+                    "quantity": t.trade.quantity,
+                    "type": t.trade.asset_category
+                } for t in w.trades
+            ]
+        })
+        
+    return summary
 
 @app.get("/history")
 def get_history(user: dict = Depends(verify_token)):
