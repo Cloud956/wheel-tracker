@@ -1,19 +1,79 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
-from trade_categorizer import CategorizedTrade, ActionType
+from models import CategorizedTrade, ActionType, Wheel
 
-class Wheel(BaseModel):
-    wheel_id: str
-    symbol: str
-    start_date: datetime
-    end_date: Optional[datetime] = None
-    is_open: bool = True
-    trades: List[CategorizedTrade] = []
-    total_pnl: float = 0.0
-    total_commissions: float = 0.0
+def identify_new_wheels(categorized_trades: List[CategorizedTrade], username: str) -> List[Wheel]:
+    """
+    Scans categorized trades and identifies ONLY new wheels that should be opened.
+    Returns a list of newly created Wheel objects.
+    
+    This function looks for ActionType.OPEN_WHEEL (Sell Put) that marks the start of a cycle.
+    """
+    new_wheels: List[Wheel] = []
+    
+    # We might want to track active symbols if we want to support multiple concurrent wheels
+    # per symbol, but for now assuming one active wheel per symbol strategy is handled elsewhere
+    # or simple scan.
+    
+    for c_trade in categorized_trades:
+        # Check if this trade initiates a wheel
+        if c_trade.category == ActionType.OPEN_WHEEL:
+            symbol = c_trade.trade.symbol
+            
+            # Create the new wheel object
+            # Using IB Exec ID in wheel ID to ensure uniqueness
+            exec_suffix = c_trade.trade.ib_exec_id if c_trade.trade.ib_exec_id else c_trade.trade.datetime.strftime('%H%M%S')
+            
+            new_wheel = Wheel(
+                wheel_id=f"WHEEL_{username}_{symbol}_{c_trade.trade.datetime.strftime('%Y%m%d')}_{exec_suffix}",
+                symbol=symbol,
+                strike=c_trade.trade.strike,
+                start_date=c_trade.trade.datetime,
+                is_open=True,
+                trades=[c_trade]
+            )
+            
+            # Calculate initial PnL (Premium received)
+            multiplier = 100.0
+            # Cash flow: premium received - commission paid (commission is usually negative in IBKR reports, but we use abs value in some contexts. 
+            # In IBKR Flex, ibCommission is typically negative (cost).
+            # Net Cash = -(Quantity * Price * 100) + Commission
+            # Quantity < 0 (Sell) -> Positive premium
+            
+            # Using the parsed positive commission value if we parsed abs, or raw.
+            # Assuming ib_commission parsed from 'ibCommission' is negative (cost).
+            
+            raw_commission = c_trade.trade.ib_commission 
+            # If IBKR reports it as negative (e.g. -1.05), we add it. 
+            # If we parsed it as positive magnitude, we subtract it.
+            # Standard Flex XML usually has negative for cost. Let's assume negative.
+            
+            cash = -(c_trade.trade.quantity * c_trade.trade.trade_price * multiplier) + raw_commission
+            new_wheel.total_pnl = cash
+            new_wheel.total_commissions = raw_commission
+            
+            new_wheels.append(new_wheel)
+            
+    return new_wheels
 
-def analyze_wheels(categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
+def merge_new_wheels(new_wheels: List[Wheel], existing_wheels: List[Wheel]) -> List[Wheel]:
+    """
+    Merges newly identified wheels with the existing list.
+    1. Filters out duplicates (wheels that already exist).
+    2. Returns the COMBINED list of all wheels.
+    """
+    combined_wheels: List[Wheel] = list(existing_wheels)
+    existing_ids = {w.wheel_id for w in existing_wheels}
+
+    # Add ONLY unique new wheels
+    for wheel in new_wheels:
+        if wheel.wheel_id not in existing_ids:
+            combined_wheels.append(wheel)
+            
+    return combined_wheels
+
+def analyze_wheels(categorized_trades: List[CategorizedTrade], username: str) -> List[Wheel]:
     """
     Groups categorized trades into Wheel objects.
     Tracks active wheels per symbol.
@@ -27,9 +87,11 @@ def analyze_wheels(categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
         # Start new wheel
         if c_trade.category == ActionType.OPEN_WHEEL:
             if symbol not in active_wheels:
+                exec_suffix = c_trade.trade.ib_exec_id if c_trade.trade.ib_exec_id else c_trade.trade.datetime.strftime('%H%M%S')
                 new_wheel = Wheel(
-                    wheel_id=f"WHEEL_{symbol}_{c_trade.trade.datetime.strftime('%Y%m%d')}",
+                    wheel_id=f"WHEEL_{username}_{symbol}_{c_trade.trade.datetime.strftime('%Y%m%d')}_{exec_suffix}",
                     symbol=symbol,
+                    strike=c_trade.trade.strike,
                     start_date=c_trade.trade.datetime,
                     is_open=True,
                     trades=[c_trade]
@@ -61,7 +123,7 @@ def analyze_wheels(categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
     # Calculate PnL for all wheels
     for wheel in wheels:
         cash = 0.0
-        # comm = 0.0 # Commission not yet tracked in Trade object
+        comm = 0.0
         for ct in wheel.trades:
             # Cash flow: -quantity * price * 100 (for options)
             # Quantity < 0 (Sell) -> Cash Positive
@@ -70,9 +132,13 @@ def analyze_wheels(categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
             # Multiplier usually 100 for standard options
             multiplier = 100.0
             
-            cash += -(ct.trade.quantity * ct.trade.trade_price * multiplier)
+            # Assuming ib_commission is negative (expense)
+            trade_cash = -(ct.trade.quantity * ct.trade.trade_price * multiplier) + ct.trade.ib_commission
+            
+            cash += trade_cash
+            comm += ct.trade.ib_commission
             
         wheel.total_pnl = cash
+        wheel.total_commissions = comm
         
     return wheels
-

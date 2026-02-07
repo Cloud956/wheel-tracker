@@ -1,35 +1,148 @@
-from enum import Enum
+from typing import List, Optional
+from models import Trade, CategorizedTrade, ActionType
+import requests
+import time
+import pandas as pd
+import io
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict
-from pydantic import BaseModel
 
-class ActionType(Enum):
-    OPEN_WHEEL = "Put option sold"
-    CLOSE_WHEEL_PUT = "Put option bought"
-    ASSIGNMENT_PUT = "Put option bought with 100 shares bought"
-    SELL_COVERED_CALL = "Call option sold"
-    CLOSE_CALL = "Call option bought (without shares sold)"
-    ASSIGNMENT_CALL = "Call option bought (with shares sold)"
+def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
+    """
+    Calls IBKR Flex API, gets the report, parses XML, and returns a list of Trade objects.
+    """
+    send_url = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest"
+    get_url = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement"
     
-    # Helper for stock trades or others
-    STOCK_BUY = "Stock Buy"
-    STOCK_SELL = "Stock Sell"
-    UNCATEGORIZED = "Uncategorized"
+    # Send Request
+    resp = requests.get(send_url, params={'t': token, 'q': query_id, 'v': "3"})
+    if "<ReferenceCode>" not in resp.text:
+        error_msg = f"IBKR Flex Request Failed. Response: {resp.text[:200]}"
+        print(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+    
+    ref_code = resp.text.split("<ReferenceCode>")[1].split("</ReferenceCode>")[0]
+    
+    # Wait for report generation
+    # IBKR documentation recommends retrying with exponential backoff
+    retry_count = 0
+    max_retries = 20
+    xml_content = None
+    
+    while retry_count < max_retries:
+        sleep_time = 2 + (retry_count * 3) # Increases wait time
+        print(f"Waiting {sleep_time}s for Flex Report (Attempt {retry_count+1}/{max_retries})...")
+        time.sleep(sleep_time)
+        
+        report_resp = requests.get(get_url, params={'t': token, 'q': ref_code, 'v': "3"})
+        
+        # Check for success indicators
+        if "<FlexStatement" in report_resp.text: # <FlexStatement> is standard root or child
+            xml_content = report_resp.text
+            break
+            
+        if "<ErrorCode>" in report_resp.text:
+            # If it's just 'Statement generation in progress', we continue
+            if "1019" in report_resp.text: # Code for 'Statement generation in progress'
+                print("Report generation in progress...")
+                pass
+            else:
+                # Real error output for debugging
+                print(f"Flex Query Fatal Error: {report_resp.text}")
+                break
+        else:
+             # Weird state or just empty
+             print(f"Unexpected Response: {report_resp.text[:200]}")
+        
+        retry_count += 1
+        
+    if not xml_content:
+        raise HTTPException(status_code=500, detail="Failed to retrieve Flex Report after retries")
 
-class Trade(BaseModel):
-    trade_id: str
-    symbol: str
-    asset_category: str  # 'OPT' or 'STK'
-    put_call: Optional[str]  # 'P', 'C', or None
-    quantity: float
-    trade_price: float
-    datetime: datetime
-    description: Optional[str] = ""
+    # Use pandas to parse XML
+    try:
+        df_trades = pd.read_xml(io.StringIO(xml_content), xpath=".//Trade")
+    except ValueError:
+         # Handle case where XML is valid but has no Trade elements
+         return []
+    
+    if df_trades.empty:
+            return []
 
-class CategorizedTrade(BaseModel):
-    trade: Trade
-    category: ActionType
-    related_trade_id: Optional[str] = None # ID of the stock trade if assignment
+    # Filter out ignored symbols
+    IGNORED_SYMBOLS = [ "ABN"] # Add any others here
+    if 'underlyingSymbol' in df_trades.columns:
+        df_trades = df_trades[~df_trades['underlyingSymbol'].isin(IGNORED_SYMBOLS)]
+    
+    # Convert DataFrame to List[Trade]
+    trades_list = []
+    for _, row in df_trades.iterrows():
+        try:
+            # Handle standard IBKR attributes
+            # Sometimes they provide 'dateTime' attribute directly: "20260205;094326"
+            raw_dt = str(row.get('dateTime', ''))
+            
+            if ';' in raw_dt:
+                # Format: "20260205;094326"
+                dt = datetime.strptime(raw_dt, "%Y%m%d;%H%M%S")
+            else:
+                # Fallback to separate tradeDate and tradeTime fields
+                d_str = str(row.get('tradeDate', ''))
+                t_str = str(row.get('tradeTime', '000000')) # Default if missing
+                
+                date_part = datetime.strptime(d_str, "%Y%m%d")
+                
+                # Handle time with or without colons
+                if ':' in t_str:
+                    time_part = datetime.strptime(t_str, "%H:%M:%S").time()
+                else:
+                    # Assume HHMMSS format
+                    # Pad with zeros if necessary (e.g. 93000 -> 093000)
+                    t_str = t_str.zfill(6)
+                    time_part = datetime.strptime(t_str, "%H%M%S").time()
+                    
+                dt = datetime.combine(date_part.date(), time_part)
+        except Exception as e:
+            print(f"Date parsing error for row: {e}. using Now()")
+            dt = datetime.now() 
+        
+        # Create Unique ID
+        # Append asset type to ensure uniqueness if IBKR reuses IDs for assignment legs
+        # Prefer ibExecID if available
+        ib_exec_id = str(row.get('ibExecID', row.get('transactionID', '')))
+        raw_id = ib_exec_id if ib_exec_id else f"{row.get('tradeDate')}-{row.get('tradeTime')}-{row.get('symbol')}"
+        
+        asset_cat = str(row.get('assetCategory', 'UNKNOWN'))
+        unique_id = f"{raw_id}_{asset_cat}"
+
+        strike_str = row.get('strike')
+        strike_val = None
+        if pd.notna(strike_str) and str(strike_str).strip() != "":
+            try:
+                strike_val = float(strike_str)
+            except (ValueError, TypeError):
+                print(f"Failed to parse strike: {strike_str}")
+                pass # Keep None if parse fails
+            
+            # Debug strike parsing
+        if strike_val is not None:
+            print(f"Parsed Trade: Symbol={str(row.get('symbol'))}, Strike Raw={strike_str}, Parsed={strike_val}")
+
+        trade = Trade(
+                trade_id=unique_id, 
+                ib_exec_id=ib_exec_id,
+                symbol=str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN'))),
+                asset_category=asset_cat,
+                put_call=str(row.get('putCall')) if pd.notna(row.get('putCall')) else None,
+                strike=strike_val,
+                quantity=float(row.get('quantity', 0)),
+                trade_price=float(row.get('tradePrice', 0)),
+                ib_commission=float(row.get('ibCommission', 0)),
+                datetime=dt,
+                description=str(row.get('description', ''))
+            )
+        trades_list.append(trade)
+
+    return trades_list
 
 def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
     """

@@ -1,0 +1,46 @@
+from enum import Enum
+from datetime import datetime
+from typing import List, Optional
+from pydantic import BaseModel
+
+class ActionType(Enum):
+    OPEN_WHEEL = "Put option sold"
+    CLOSE_WHEEL_PUT = "Put option bought"
+    ASSIGNMENT_PUT = "Put option bought with 100 shares bought"
+    SELL_COVERED_CALL = "Call option sold"
+    CLOSE_CALL = "Call option bought (without shares sold)"
+    ASSIGNMENT_CALL = "Call option bought (with shares sold)"
+    
+    # Helper for stock trades or others
+    STOCK_BUY = "Stock Buy"
+    STOCK_SELL = "Stock Sell"
+    UNCATEGORIZED = "Uncategorized"
+
+class Trade(BaseModel):
+    trade_id: str
+    ib_exec_id: Optional[str] = None
+    symbol: str
+    asset_category: str  # 'OPT' or 'STK'
+    put_call: Optional[str]  # 'P', 'C', or None
+    strike: Optional[float] = None
+    quantity: float
+    trade_price: float
+    ib_commission: float = 0.0
+    datetime: datetime
+    description: Optional[str] = ""
+
+class CategorizedTrade(BaseModel):
+    trade: Trade
+    category: ActionType
+    related_trade_id: Optional[str] = None # ID of the stock trade if assignment
+
+class Wheel(BaseModel):
+    wheel_id: str
+    symbol: str
+    strike: Optional[float] = None
+    start_date: datetime
+    end_date: Optional[datetime] = None
+    is_open: bool = True
+    trades: List[CategorizedTrade] = []
+    total_pnl: float = 0.0
+    total_commissions: float = 0.0
