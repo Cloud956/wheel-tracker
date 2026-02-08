@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    image: wheel-tracker-backend:latest
+    container_name: wheel-tracker-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - wheel-tracker-backend-data:/data
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - DYNAMODB_USER_TABLE_NAME=${DYNAMODB_USER_TABLE_NAME:-UserConfigs}
+      - DYNAMODB_WHEEL_TABLE_NAME=${DYNAMODB_WHEEL_TABLE_NAME:-Wheels}
+    networks:
+      - wheel-tracker-network
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: wheel-tracker-frontend:latest
+    container_name: wheel-tracker-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - API_BASE=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - wheel-tracker-network
+    restart: always
+
+volumes:
+  wheel-tracker-backend-data:
+
+networks:
+  wheel-tracker-network:
+    driver: bridge

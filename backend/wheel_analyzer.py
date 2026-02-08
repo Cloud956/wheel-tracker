@@ -73,6 +73,74 @@ def merge_new_wheels(new_wheels: List[Wheel], existing_wheels: List[Wheel]) -> L
             
     return combined_wheels
 
+def recalculate_wheel_pnl(wheel: Wheel):
+    """Recalculates PnL and commissions for a wheel based on its trades."""
+    cash = 0.0
+    comm = 0.0
+    for ct in wheel.trades:
+        multiplier = 100.0
+        if ct.trade.asset_category == 'STK':
+            multiplier = 1.0 # Price is per share, quantity is shares.
+            
+        trade_cash = -(ct.trade.quantity * ct.trade.trade_price * multiplier) + ct.trade.ib_commission
+        cash += trade_cash
+        comm += ct.trade.ib_commission
+        
+    wheel.total_pnl = cash
+    wheel.total_commissions = comm
+
+def update_wheels(wheels: List[Wheel], categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
+    """
+    Updates existing wheels with subsequent trades (Close/Update).
+    """
+    # 1. Map open wheels by symbol
+    open_wheels = {}
+    for w in wheels:
+        if w.is_open:
+            if w.symbol not in open_wheels:
+                open_wheels[w.symbol] = w
+            else:
+                if w.start_date > open_wheels[w.symbol].start_date:
+                    open_wheels[w.symbol] = w
+    
+    # 2. Iterate trades (Assume sorted or sort them)
+    sorted_trades = sorted(categorized_trades, key=lambda x: x.trade.datetime)
+
+    for c_trade in sorted_trades:
+        # Skip OPEN_WHEEL (already handled by identify_new_wheels and merge)
+        if c_trade.category == ActionType.OPEN_WHEEL:
+             continue
+             
+        symbol = c_trade.trade.symbol
+        if symbol in open_wheels:
+            wheel = open_wheels[symbol]
+            
+            # Deduplicate by trade_id
+            existing_ids = {t.trade.trade_id for t in wheel.trades}
+            if c_trade.trade.trade_id in existing_ids:
+                # Even if trade exists, check if it should have closed the wheel but didn't?
+                # No, if it exists, assume processed. 
+                # But wait, what if we just loaded it from DB and it's open, and this trade is IN the list?
+                # If the trade is IN the list, it's already processed.
+                continue
+                
+            # Add trade
+            wheel.trades.append(c_trade)
+            
+            # Check closing conditions
+            if c_trade.category in (ActionType.CLOSE_WHEEL_PUT, ActionType.ASSIGNMENT_CALL, ActionType.STOCK_SELL):
+                wheel.is_open = False
+                wheel.end_date = c_trade.trade.datetime
+                # Remove from active map
+                if open_wheels[symbol] == wheel:
+                    del open_wheels[symbol]
+        
+    # 3. Recalculate Stats for ALL wheels
+    for w in wheels:
+        recalculate_wheel_pnl(w)
+        
+    return wheels
+
 def analyze_wheels(categorized_trades: List[CategorizedTrade], username: str) -> List[Wheel]:
     """
     Groups categorized trades into Wheel objects.

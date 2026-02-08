@@ -12,7 +12,7 @@ from datetime import datetime
 from database import get_user_config, save_wheels, get_wheels
 from trade_categorizer import categorize_trades, fetch_and_parse_trades
 from models import Trade, ActionType
-from wheel_analyzer import analyze_wheels, identify_new_wheels, merge_new_wheels
+from wheel_analyzer import analyze_wheels, identify_new_wheels, merge_new_wheels, update_wheels
 
 load_dotenv()
 app = FastAPI()
@@ -60,7 +60,10 @@ def sync_data(user: dict = Depends(verify_token)):
         # 5. Merge New Wheels with Existing
         wheels = merge_new_wheels(new_wheels, get_wheels(email))
         
-        # 6. Save Wheels to DynamoDB
+        # 6. Update Wheels with other trades (Close/Update actions)
+        wheels = update_wheels(wheels, categorized)
+        
+        # 7. Save Wheels to DynamoDB
         # We convert the Pydantic models to dicts for saving
         # The database module handles type conversion (datetime->str, float->Decimal)
         wheels_data = [w.dict() for w in wheels]
