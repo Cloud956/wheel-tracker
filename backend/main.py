@@ -9,10 +9,10 @@ import time
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_user_config, save_wheels, get_wheels
+from database import get_user_config, save_wheels, get_wheels, delete_user_wheels
 from trade_categorizer import categorize_trades, fetch_and_parse_trades
 from models import Trade, ActionType
-from wheel_analyzer import analyze_wheels, identify_new_wheels, merge_new_wheels, update_wheels
+from wheel_analyzer import analyze_wheels, identify_new_wheels, merge_new_wheels, close_wheels
 
 load_dotenv()
 app = FastAPI()
@@ -51,17 +51,21 @@ def sync_data(user: dict = Depends(verify_token)):
         if not trades_list:
              return {"status": "success", "message": "No trades found in Flex Report", "categorized_trades": []}
 
+        # Clear existing wheels before full re-sync
+        delete_user_wheels(email)
+
         # 3. Categorize Data
         categorized = categorize_trades(trades_list)
         
         # 4. Identify New Wheels
+        # Since we cleared everything, all identified wheels are treated as new
         new_wheels = identify_new_wheels(categorized, email)
         
-        # 5. Merge New Wheels with Existing
-        wheels = merge_new_wheels(new_wheels, get_wheels(email))
+        # 5. Merge New Wheels with Existing (Existing is empty now)
+        wheels = new_wheels # merge_new_wheels(new_wheels, []) 
         
         # 6. Update Wheels with other trades (Close/Update actions)
-        wheels = update_wheels(wheels, categorized)
+        wheels = close_wheels(wheels, categorized)
         
         # 7. Save Wheels to DynamoDB
         # We convert the Pydantic models to dicts for saving
@@ -116,6 +120,12 @@ def sync_data(user: dict = Depends(verify_token)):
              return {"status": "success", "message": "Parsed empty document (No trades or empty XML)", "categorized_trades": []}
         raise HTTPException(status_code=500, detail=f"Error processing Flex data: {str(e)}")
 
+@app.get("/clear-data")
+def clear_data(user: dict = Depends(verify_token)):
+    email = user.get('email')
+    count = delete_user_wheels(email)
+    return {"status": "success", "message": f"Deleted {count} wheels for user {email}"}
+
 @app.get("/wheel-summary")
 def get_wheel_summary(user: dict = Depends(verify_token)):
     email = user.get('email')
@@ -144,6 +154,7 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
             "endDate": e_date,
             "netCash": total_pnl, # PnL is essentially net cash flow in this model
             "isOpen": w.is_open,
+            "currentSoldCall": w.currentSoldCall.dict() if w.currentSoldCall else None,
             "pnl": format_currency(total_pnl),
             "comm": format_currency(total_comm),
             "trades": [

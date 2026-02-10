@@ -72,6 +72,7 @@ def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
     IGNORED_SYMBOLS = [ "ABN"] # Add any others here
     if 'underlyingSymbol' in df_trades.columns:
         df_trades = df_trades[~df_trades['underlyingSymbol'].isin(IGNORED_SYMBOLS)]
+
     
     # Convert DataFrame to List[Trade]
     trades_list = []
@@ -102,17 +103,24 @@ def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
                     
                 dt = datetime.combine(date_part.date(), time_part)
         except Exception as e:
-            print(f"Date parsing error for row: {e}. using Now()")
             dt = datetime.now() 
         
-        # Create Unique ID
-        # Append asset type to ensure uniqueness if IBKR reuses IDs for assignment legs
-        # Prefer ibExecID if available
-        ib_exec_id = str(row.get('ibExecID', row.get('transactionID', '')))
-        raw_id = ib_exec_id if ib_exec_id else f"{row.get('tradeDate')}-{row.get('tradeTime')}-{row.get('symbol')}"
+
+        ib_exec_id = str(row.get('ibExecID'))
         
+        # New robust ID generation strategy:
+        # Use IB Exec ID if available + Asset Category (to distinguish stock vs option leg if they share ID)
+        # Fallback to composite key of attributes.
         asset_cat = str(row.get('assetCategory', 'UNKNOWN'))
-        unique_id = f"{raw_id}_{asset_cat}"
+        if ib_exec_id != "nan":
+             unique_id = f"{ib_exec_id}_{asset_cat}"
+        else:
+             # Composite key: Symbol + Date + Time + Quantity + Asset
+             # Format date nicely
+             date_str = dt.strftime("%Y%m%d%H%M%S")
+             qty_str = str(row.get('quantity', 0))
+             sym_str = str(row.get('symbol', 'UNKNOWN'))
+             unique_id = f"{sym_str}_{date_str}_{qty_str}_{asset_cat}"
 
         strike_str = row.get('strike')
         strike_val = None
@@ -120,12 +128,10 @@ def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
             try:
                 strike_val = float(strike_str)
             except (ValueError, TypeError):
-                print(f"Failed to parse strike: {strike_str}")
                 pass # Keep None if parse fails
             
             # Debug strike parsing
         if strike_val is not None:
-            print(f"Parsed Trade: Symbol={str(row.get('symbol'))}, Strike Raw={strike_str}, Parsed={strike_val}")
 
         trade = Trade(
                 trade_id=unique_id, 
@@ -186,7 +192,6 @@ def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
             others.append(trade)
 
     initial_results: List[CategorizedTrade] = []
-    
     # 2. Initial Basic Categorization
     for t in puts_sold:
         initial_results.append(CategorizedTrade(trade=t, category=ActionType.OPEN_WHEEL))
@@ -209,7 +214,7 @@ def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
     # Sort initial results by time to help window matching
     initial_results.sort(key=lambda x: x.trade.datetime)
     
-    window = timedelta(minutes=10)
+    window = timedelta(minutes=30)
 
     for i, cat_trade in enumerate(initial_results):
         if cat_trade.trade.trade_id in consumed_trade_ids:
@@ -220,42 +225,58 @@ def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
         # Logic for Put Assignment: Bought Put + Bought Shares
         if cat_trade.category == ActionType.CLOSE_WHEEL_PUT:
             # Search for a matching Stock Buy
-            for other in initial_results:
-                if other.trade.trade_id == cat_trade.trade.trade_id:
-                    continue
-                if other.trade.trade_id in consumed_trade_ids:
-                    continue
-                
-                if other.category == ActionType.STOCK_BUY:
-                    if other.trade.symbol == cat_trade.trade.symbol:
-                        if abs(other.trade.datetime - cat_trade.trade.datetime) <= window:
-                            match = other
-                            break
             
-            if match:
-                cat_trade.category = ActionType.ASSIGNMENT_PUT
-                cat_trade.related_trade_id = match.trade.trade_id
-                consumed_trade_ids.add(match.trade.trade_id)
+            # Use shares_trades bucket directly for searching, as it contains the raw Trade objects for stocks
+            # Filter for buys (positive quantity)
+            for stock_trade in [t for t in shares_trades if t.quantity > 0]:
+
+                # Basic self-check (unlikely to match ID but safe to keep)
+                if stock_trade.trade_id == cat_trade.trade.trade_id:
+                    continue
+                if stock_trade.trade_id in consumed_trade_ids:
+                    continue
+                if stock_trade.symbol != cat_trade.trade.symbol:
+                    continue
+                if stock_trade.trade_price != cat_trade.trade.strike:
+                    continue
+                    
+                time_diff = abs(stock_trade.datetime - cat_trade.trade.datetime)
+                    
+                # Time window check
+                if time_diff <= window:
+                    # Create a dummy 'other' wrapper just for the logic below or use direct object
+                    # We need to add the Stock Trade ID to consumed
+                    cat_trade.category = ActionType.ASSIGNMENT_PUT
+                    cat_trade.related_trade_id = stock_trade.trade_id
+                    consumed_trade_ids.add(stock_trade.trade_id)
+                    match = stock_trade # Found it
+                    break
+            
+            if not match:
 
         # Logic for Call Assignment: Bought Call + Sold Shares
         elif cat_trade.category == ActionType.CLOSE_CALL:
             # Search for a matching Stock Sell
-            for other in initial_results:
-                if other.trade.trade_id == cat_trade.trade.trade_id:
+            for stock_trade in [t for t in shares_trades if t.quantity < 0]:
+                
+                if stock_trade.trade_id == cat_trade.trade.trade_id:
                     continue
-                if other.trade.trade_id in consumed_trade_ids:
+                if stock_trade.trade_id in consumed_trade_ids:
                     continue
                 
-                if other.category == ActionType.STOCK_SELL:
-                    if other.trade.symbol == cat_trade.trade.symbol:
-                        if abs(other.trade.datetime - cat_trade.trade.datetime) <= window:
-                            match = other
-                            break
+                if stock_trade.symbol != cat_trade.trade.symbol:
+                    continue
+                if stock_trade.trade_price != cat_trade.trade.strike:
+                    continue
+
+                if abs(stock_trade.datetime - cat_trade.trade.datetime) <= window:
+                    match = stock_trade
+                    break
             
             if match:
                 cat_trade.category = ActionType.ASSIGNMENT_CALL
-                cat_trade.related_trade_id = match.trade.trade_id
-                consumed_trade_ids.add(match.trade.trade_id)
+                cat_trade.related_trade_id = match.trade_id
+                consumed_trade_ids.add(match.trade_id)
         
         final_results.append(cat_trade)
     
@@ -271,9 +292,16 @@ def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
     }
     
     filtered_results = []
+    
+    # Track trades that were "consumed" as related trades (e.g., Stock Buy used in Assignment)
+    # consumed_trade_ids set already tracks this.
+    
     for t in final_results:
+        # If this trade was consumed as a "related trade" (the stock leg), SKIP it.
+        # But we MUST include the primary trade (the Option trade) which now has the ASSIGNMENT category.
         if t.trade.trade_id in consumed_trade_ids:
-            continue
+             continue
+             
         if t.category in allowed_categories:
             filtered_results.append(t)
             
