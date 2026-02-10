@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from models import Wheel, CategorizedTrade
+from models import Wheel, CategorizedTrade, Trade
 import requests
 
 load_dotenv()
@@ -37,7 +37,6 @@ def get_user_config(email: str) -> Optional[Dict[str, Any]]:
         response = table.get_item(Key={'username': email})
         return response.get('Item')
     except ClientError as e:
-        print(f"Error fetching config for {email}: {e}")
         return None
 
 def update_user_config(email: str, config: Dict[str, Any]) -> bool:
@@ -78,7 +77,6 @@ def update_user_config(email: str, config: Dict[str, Any]) -> bool:
         )
         return True
     except ClientError as e:
-        print(f"Error updating config for {email}: {e}")
         return False
 
 def _convert_for_dynamodb(obj: Any) -> Any:
@@ -125,12 +123,57 @@ def save_wheels(username: str, wheels: List[Dict[str, Any]]) -> int:
                 **clean_wheel
             }
             
-            print(f"Saving item to DynamoDB: {item}")
             
             batch.put_item(Item=item)
             count += 1
             
     return count
+
+def delete_user_wheels(username: str) -> int:
+    """
+    Deletes ALL wheels for a specific user.
+    """
+    table = dynamodb.Table(WHEEL_TABLE_NAME)
+    count = 0
+    try:
+        from boto3.dynamodb.conditions import Key
+        
+        # Query all items for the user (Partition Key only query)
+        response = table.query(
+            KeyConditionExpression=Key('username').eq(username)
+        )
+        items = response.get('Items', [])
+        
+        with table.batch_writer() as batch:
+            for item in items:
+                batch.delete_item(
+                    Key={
+                        'username': item['username'],
+                        'sk': item['sk']
+                    }
+                )
+                count += 1
+                
+        # Handle pagination if user has many items
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items = response.get('Items', [])
+            with table.batch_writer() as batch:
+                for item in items:
+                    batch.delete_item(
+                        Key={
+                            'username': item['username'],
+                            'sk': item['sk']
+                        }
+                    )
+                    count += 1
+                    
+        return count
+    except ClientError as e:
+        return 0
 
 def get_wheels(username: str) -> List[Wheel]:
     """
@@ -162,6 +205,11 @@ def get_wheels(username: str) -> List[Wheel]:
                     for t_data in item['trades']:
                         trades.append(CategorizedTrade(**t_data))
 
+                # Reconstruct currentSoldCall if present
+                current_sold_call = None
+                if item.get('currentSoldCall'):
+                    current_sold_call = Trade(**item['currentSoldCall'])
+
                 wheel = Wheel(
                     wheel_id=item['wheel_id'],
                     symbol=item['symbol'],
@@ -171,14 +219,13 @@ def get_wheels(username: str) -> List[Wheel]:
                     is_open=item.get('is_open', True),
                     trades=trades,
                     total_pnl=float(item.get('total_pnl', 0)),
-                    total_commissions=float(item.get('total_commissions', 0))
+                    total_commissions=float(item.get('total_commissions', 0)),
+                    currentSoldCall=current_sold_call
                 )
                 wheels.append(wheel)
             except Exception as e:
-                print(f"Error parsing wheel {item.get('wheel_id')}: {e}")
                 continue
                 
         return wheels
     except ClientError as e:
-        print(f"Error fetching wheels for {username}: {e}")
         return []

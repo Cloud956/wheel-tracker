@@ -44,3 +44,4 @@ class Wheel(BaseModel):
     trades: List[CategorizedTrade] = []
     total_pnl: float = 0.0
     total_commissions: float = 0.0
+    currentSoldCall: Optional[Trade] = None

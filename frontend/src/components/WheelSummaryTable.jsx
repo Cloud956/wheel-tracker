@@ -4,6 +4,7 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   getPaginationRowModel,
+  getExpandedRowModel,
   flexRender,
 } from '@tanstack/react-table'
 import './Table.css'
@@ -13,8 +14,27 @@ const WheelSummaryTable = ({ data }) => {
     pageIndex: 0,
     pageSize: 10,
   })
+  const [expanded, setExpanded] = useState({})
+
   const columns = useMemo(
     () => [
+      {
+        id: 'expander',
+        header: () => null,
+        cell: ({ row }) => (
+          <button
+            onClick={(e) => {
+              e.stopPropagation() // Prevent row selection if that exists
+              row.toggleExpanded()
+            }}
+            style={{ cursor: 'pointer', background: 'none', border: 'none', color: '#fff', fontSize: '1.2em', padding: '0 5px' }}
+          >
+            {row.getIsExpanded() ? '▼' : '▶'}
+          </button>
+        ),
+        size: 40,
+        enableSorting: false,
+      },
       {
         accessorKey: 'wheelNum',
         header: '#',
@@ -77,12 +97,16 @@ const WheelSummaryTable = ({ data }) => {
   const table = useReactTable({
     data: data || [],
     columns,
+    getRowId: row => String(row.wheelNum), // Use wheelNum as unique ID string
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     onPaginationChange: setPagination,
+    onExpandedChange: setExpanded,
     state: {
       pagination,
+      expanded,
     },
     initialState: {
       sorting: [{ id: 'wheelNum', desc: true }],
@@ -127,16 +151,61 @@ const WheelSummaryTable = ({ data }) => {
         </thead>
         <tbody>
           {table.getRowModel().rows.map(row => (
-            <tr
-              key={row.id}
-              className={row.original.isOpen ? 'row-active' : ''}
-            >
-              {row.getVisibleCells().map(cell => (
-                <td key={cell.id}>
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
+            <React.Fragment key={row.id}>
+              <tr
+                className={row.original.isOpen ? 'row-active' : ''}
+              >
+                {row.getVisibleCells().map(cell => (
+                  <td key={cell.id}>
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+              {row.getIsExpanded() && (
+                <tr>
+                  <td colSpan={row.getVisibleCells().length} style={{ padding: 0 }}>
+                    <div className="expanded-row-content" style={{ padding: '15px', backgroundColor: '#2a2a40', borderTop: '1px solid #444' }}>
+                      <h4 style={{ margin: '0 0 10px 0', color: '#ccc' }}>Trades for Wheel #{row.original.wheelNum}</h4>
+                      <table style={{ width: '100%', fontSize: '0.85em', background: 'transparent' }}>
+                        <thead>
+                          <tr style={{ background: '#333' }}>
+                            <th style={{ padding: '8px' }}>Date</th>
+                            <th style={{ padding: '8px' }}>Action</th>
+                            <th style={{ padding: '8px' }}>Details</th>
+                            <th style={{ padding: '8px' }}>Type</th>
+                            <th style={{ padding: '8px' }}>Quantity</th>
+                            <th style={{ padding: '8px' }}>Price</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {row.original.trades && row.original.trades.map((trade, idx) => (
+                            <tr key={idx} style={{ background: idx % 2 === 0 ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
+                              <td style={{ padding: '8px', borderBottom: '1px solid #444' }}>{trade.date}</td>
+                              <td style={{ padding: '8px', borderBottom: '1px solid #444' }}>{trade.action}</td>
+                              <td style={{ padding: '8px', borderBottom: '1px solid #444' }}>{trade.details}</td>
+                              <td style={{ padding: '8px', borderBottom: '1px solid #444' }}>{trade.type}</td>
+                              <td style={{ padding: '8px', borderBottom: '1px solid #444' }} className={trade.quantity < 0 ? 'text-red' : 'text-green'}>
+                                {trade.quantity}
+                              </td>
+                              <td style={{ padding: '8px', borderBottom: '1px solid #444' }} className={trade.price?.class}>
+                                {trade.price?.value}
+                              </td>
+                            </tr>
+                          ))}
+                          {(!row.original.trades || row.original.trades.length === 0) && (
+                            <tr>
+                              <td colSpan={6} style={{ padding: '10px', textAlign: 'center', color: '#888' }}>
+                                No trades found for this wheel.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>

@@ -89,51 +89,123 @@ def recalculate_wheel_pnl(wheel: Wheel):
     wheel.total_pnl = cash
     wheel.total_commissions = comm
 
-def update_wheels(wheels: List[Wheel], categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
+def check_wheel_close_condition(wheel: Wheel, new_trade: CategorizedTrade) -> bool:
+    """
+    Checks if the wheel should be closed based on the new trade.
+    
+    Conditions for closing:
+    1. It is an open wheel with one trade only (the initial sold put), and that put was bought back.
+    2. There was a call being sold, which was now bought back.
+    
+    Returns:
+        bool: True if the wheel should be closed, False otherwise.
+    """
+    
+    print(f"DEBUG: Checking close condition for Wheel {wheel.wheel_id} (Symbol: {wheel.symbol})")
+    print(f"DEBUG: New Trade: {new_trade.category} | Qty: {new_trade.trade.quantity} | Strike: {new_trade.trade.strike}")
+    
+    # Condition 1: Initial Put Bought Back
+    # If the wheel has only 2 trades (including the new one), and the new one is CLOSE_WHEEL_PUT
+    # We check if the total quantity of the put is now 0.
+    if len(wheel.trades) == 1 and new_trade.category == ActionType.CLOSE_WHEEL_PUT:
+        # Check if the initial trade was an OPEN_WHEEL put
+        first_trade = wheel.trades[0]
+        if first_trade.category == ActionType.OPEN_WHEEL:
+             # Check if symbol, strike, expiration match for the closing trade
+             # We assume matching symbol is guaranteed by calling logic
+             # Check strike and expiration if possible (though expiration is date, maybe just strike and type?)
+             
+             t1 = first_trade.trade
+             t2 = new_trade.trade
+             
+             print(f"DEBUG: Cond 1 Check - Strike match? {t1.strike} vs {t2.strike}")
+             
+             # Match strike
+             if t1.strike == t2.strike and t1.put_call == t2.put_call:
+                 # Sum quantities (Sold is negative, Bought is positive). Should be close to 0.
+                 return True
+
+    # Condition 2: Sold Call Bought Back (or Assigned)
+    
+    if new_trade.category in (ActionType.CLOSE_CALL, ActionType.ASSIGNMENT_CALL):
+        print(f"DEBUG: Cond 2 Check - Current Sold Call: {wheel.currentSoldCall}")
+        # We need to verify if the strike matches the current sold call's strike.
+        if wheel.currentSoldCall:
+            print(f"DEBUG: Cond 2 Check - Strike match? New: {new_trade.trade.strike} vs Current: {wheel.currentSoldCall.strike}")
+            if new_trade.trade.strike == wheel.currentSoldCall.strike:
+                return True
+        else:
+             print("DEBUG: Condition 2 FAILED - No currentSoldCall found to match against")
+             return False
+
+    return False
+
+def close_wheels(wheels: List[Wheel], categorized_trades: List[CategorizedTrade]) -> List[Wheel]:
     """
     Updates existing wheels with subsequent trades (Close/Update).
     """
     # 1. Map open wheels by symbol
-    open_wheels = {}
+    # Store list of wheels per symbol to handle multiples if needed, 
+    # but for now we look for the most relevant open wheel.
+    open_wheels_map: Dict[str, List[Wheel]] = {}
+    
+    # Track consumed trade IDs to prevent adding the same trade to multiple wheels
+    # (or re-adding if logic gets complex, though simple loop helps).
+    # Initialize with trade IDs already in wheels
+    consumed_trade_ids = set()
+    
     for w in wheels:
+        for t in w.trades:
+            consumed_trade_ids.add(t.trade.trade_id)
+            
         if w.is_open:
-            if w.symbol not in open_wheels:
-                open_wheels[w.symbol] = w
-            else:
-                if w.start_date > open_wheels[w.symbol].start_date:
-                    open_wheels[w.symbol] = w
+            if w.symbol not in open_wheels_map:
+                open_wheels_map[w.symbol] = []
+            open_wheels_map[w.symbol].append(w)
     
     # 2. Iterate trades (Assume sorted or sort them)
     sorted_trades = sorted(categorized_trades, key=lambda x: x.trade.datetime)
 
     for c_trade in sorted_trades:
+        # Check if already consumed
+        if c_trade.trade.trade_id in consumed_trade_ids:
+            continue
+            
         # Skip OPEN_WHEEL (already handled by identify_new_wheels and merge)
-        if c_trade.category == ActionType.OPEN_WHEEL:
+        if c_trade.category not in (ActionType.CLOSE_WHEEL_PUT, ActionType.CLOSE_CALL, ActionType.ASSIGNMENT_CALL):
              continue
              
         symbol = c_trade.trade.symbol
-        if symbol in open_wheels:
-            wheel = open_wheels[symbol]
+        if symbol in open_wheels_map:
+
+            candidate_wheels = open_wheels_map[symbol]
             
-            # Deduplicate by trade_id
-            existing_ids = {t.trade.trade_id for t in wheel.trades}
-            if c_trade.trade.trade_id in existing_ids:
-                # Even if trade exists, check if it should have closed the wheel but didn't?
-                # No, if it exists, assume processed. 
-                # But wait, what if we just loaded it from DB and it's open, and this trade is IN the list?
-                # If the trade is IN the list, it's already processed.
-                continue
+            # We sort candidates by start_date desc (newest first)
+            candidate_wheels.sort(key=lambda w: w.start_date)
+            
+            for wheel in candidate_wheels:
+                if not wheel.is_open:
+                    continue
                 
-            # Add trade
-            wheel.trades.append(c_trade)
-            
-            # Check closing conditions
-            if c_trade.category in (ActionType.CLOSE_WHEEL_PUT, ActionType.ASSIGNMENT_CALL, ActionType.STOCK_SELL):
-                wheel.is_open = False
-                wheel.end_date = c_trade.trade.datetime
-                # Remove from active map
-                if open_wheels[symbol] == wheel:
-                    del open_wheels[symbol]
+                # Double check existence (redundant if we use consumed_trade_ids correctly but safe)
+                existing_ids = {t.trade.trade_id for t in wheel.trades}
+                if c_trade.trade.trade_id in existing_ids:
+                    continue
+                    
+                # Check closing conditions using the NEW method
+                if check_wheel_close_condition(wheel, c_trade):
+                    # Add trade
+                    wheel.trades.append(c_trade)
+                    wheel.is_open = False
+                    wheel.end_date = c_trade.trade.datetime
+                    # Mark as consumed
+                    consumed_trade_ids.add(c_trade.trade.trade_id)
+                    
+                    # Break loop since this trade closed THIS wheel.
+                    # A single closing trade (e.g. Buy 1 Put) can only close one open wheel (e.g. Sell 1 Put).
+                    # If we don't break, this same trade will be applied to ALL matching open wheels.
+                    break 
+                
         
     # 3. Recalculate Stats for ALL wheels
     for w in wheels:

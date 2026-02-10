@@ -98,6 +98,42 @@ function AccountSettings({ onLogout }) {
     }
   };
 
+  const handleClearData = async () => {
+    if (!window.confirm("Are you sure you want to delete ALL your wheel data? This cannot be undone.")) {
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setError(null);
+      setSuccessMsg('');
+
+      const token = Cookies.get("token");
+      if (!token) throw new Error("No authentication token found");
+
+      const response = await fetch(`${API_BASE}/clear-data`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.status === 401) {
+        onLogout();
+        return;
+      }
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to clear data');
+      }
+
+      setSuccessMsg(data.message || 'Data cleared successfully!');
+    } catch (e) {
+      console.error(e);
+      setError('Failed to clear data: ' + e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setSettings(prev => ({
@@ -147,6 +183,23 @@ function AccountSettings({ onLogout }) {
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
       </form>
+
+      <div style={{ marginTop: '30px', borderTop: '1px solid #444', paddingTop: '20px' }}>
+        <h3 style={{ color: '#ccc' }}>Danger Zone</h3>
+        <p style={{ color: '#999', fontSize: '0.9em', marginBottom: '15px' }}>
+          Resetting your data will delete all synced wheels and trades from the database.
+          You can re-sync from IBKR afterwards to restore data.
+        </p>
+        <button 
+          type="button" 
+          onClick={handleClearData} 
+          disabled={saving}
+          className="btn"
+          style={{ backgroundColor: '#dc3545', color: 'white' }}
+        >
+          Clear All Data
+        </button>
+      </div>
     </div>
   );
 }
