@@ -3,6 +3,16 @@
 # Script to build and deploy both frontend and backend containers
 set -e 
 
+# Load .env file if it exists (automatically export variables)
+if [ -f .env ]; then
+  # export $(grep -v '^#' .env | xargs)
+  # Safer way to load .env in bash without xargs weirdness affecting strings with spaces
+  set -a
+  source .env
+  set +a
+  echo "✅ Loaded environment variables from .env"
+fi
+
 PROFILE=${1:-prod}
 
 if [ "$PROFILE" = "dev" ] && [ "$PROFILE" != "prod" ]; then
