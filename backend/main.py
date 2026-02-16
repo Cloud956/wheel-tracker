@@ -28,6 +28,10 @@ app.add_middleware(
 # Include routers
 app.include_router(account.router)
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "message": "Backend is running and accessible"}
+
 @app.get("/sync")
 def sync_data(user: dict = Depends(verify_token)):
     email = user.get('email')
