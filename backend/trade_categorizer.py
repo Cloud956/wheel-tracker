@@ -129,23 +129,20 @@ def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
                 strike_val = float(strike_str)
             except (ValueError, TypeError):
                 pass # Keep None if parse fails
-            
-            # Debug strike parsing
-        if strike_val is not None:
 
         trade = Trade(
-                trade_id=unique_id, 
-                ib_exec_id=ib_exec_id,
-                symbol=str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN'))),
-                asset_category=asset_cat,
-                put_call=str(row.get('putCall')) if pd.notna(row.get('putCall')) else None,
-                strike=strike_val,
-                quantity=float(row.get('quantity', 0)),
-                trade_price=float(row.get('tradePrice', 0)),
-                ib_commission=float(row.get('ibCommission', 0)),
-                datetime=dt,
-                description=str(row.get('description', ''))
-            )
+            trade_id=unique_id, 
+            ib_exec_id=ib_exec_id,
+            symbol=str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN'))),
+            asset_category=asset_cat,
+            put_call=str(row.get('putCall')) if pd.notna(row.get('putCall')) else None,
+            strike=strike_val,
+            quantity=float(row.get('quantity', 0)),
+            trade_price=float(row.get('tradePrice', 0)),
+            ib_commission=float(row.get('ibCommission', 0)),
+            datetime=dt,
+            description=str(row.get('description', ''))
+        )
         trades_list.append(trade)
 
     return trades_list
