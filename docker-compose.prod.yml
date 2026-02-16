@@ -30,6 +30,7 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Use the internal docker service name 'backend' and port 8000
       - API_BASE=http://backend:8000
     depends_on:
       - backend
