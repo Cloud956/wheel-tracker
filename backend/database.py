@@ -23,7 +23,7 @@ if not aws_access_key:
 if not aws_secret_key:
     aws_secret_key = None
 if not aws_region:
-    aws_region = None # Boto3 will find region from config or metadata
+    aws_region = "us-east-1" # Default to us-east-1 if no region is found
 
 # Only pass credentials if explicitly provided (and not empty)
 # Otherwise boto3 will look for credentials in environment variables, ~/.aws/credentials, or IAM Role.
