@@ -155,3 +155,5 @@ env/
 
 # Docker/Podman
 .dockerignore
+# SSH keys
+*.pem
