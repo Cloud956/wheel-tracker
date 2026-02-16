@@ -250,6 +250,7 @@ def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
                     break
             
             if not match:
+                pass  # No matching stock trade found for this put close
 
         # Logic for Call Assignment: Bought Call + Sold Shares
         elif cat_trade.category == ActionType.CLOSE_CALL:
