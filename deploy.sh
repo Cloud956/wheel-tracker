@@ -5,9 +5,22 @@ set -e
 
 PROFILE=${1:-prod}
 
-if [ "$PROFILE" != "dev" ] && [ "$PROFILE" != "prod" ]; then
+if [ "$PROFILE" = "dev" ] && [ "$PROFILE" != "prod" ]; then
   echo "Error: Profile must be 'dev' or 'prod'"
   exit 1
+fi
+
+# Ensure certs directory exists
+mkdir -p certs
+
+# Check if certificates exist, if not generate self-signed
+if [ ! -f certs/fullchain.pem ] || [ ! -f certs/privkey.pem ]; then
+    echo -e "${YELLOW}Generating self-signed SSL certificates...${NC}"
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout certs/privkey.pem \
+        -out certs/fullchain.pem \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+    echo -e "${GREEN}Self-signed certificates generated.${NC}"
 fi
 
 echo "🚀 Starting deployment process (Profile: $PROFILE)..."
