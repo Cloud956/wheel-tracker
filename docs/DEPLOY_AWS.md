@@ -25,7 +25,8 @@ This guide outlines the steps to deploy the Wheel Tracker application to an AWS 
      - **Type**: SSH | **Port**: 22 | **Source**: `My IP` (AWS will auto-fill yours).
      - **Type**: Custom TCP | **Port**: 3000 (Frontend) | **Source**: `My IP` AND `[Other IP]/32`.
      - **Type**: Custom TCP | **Port**: 8000 (Backend) | **Source**: `My IP` AND `[Other IP]/32`.
-   - *Important*: Do NOT select "Anywhere" (0.0.0.0/0) for these rules. This ensures only you and the other person can see the site.
+     - **Type**: HTTP | **Port**: 80 (Web) | **Source**: `0.0.0.0/0` (Anywhere).
+   - *Important*: Open port 80 for normal web access via your domain. Port 3000 and 8000 are now behind Nginx and don't need to be publicly exposed unless for debugging.
 4. **IAM Role** (Crucial for DynamoDB):
    This defines permissions for your server without needing API keys.
    1. Go to the **IAM Dashboard** in AWS Console.
@@ -97,4 +98,5 @@ Ensure your DynamoDB tables exist in the region defined.
 - Partition Keys: Check your code/local setup (likely `email` or `wheel_id`).
 
 ## Step 5: Access
-- Open browser to: `http://your-instance-ip:3000`
+- Open browser to: `http://your-domain.com` or `http://your-instance-ip`
+- The application now runs on port 80 via Nginx.

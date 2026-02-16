@@ -6,7 +6,7 @@ import TradeHistoryTable from './TradeHistoryTable';
 import Logout from './logins/logout';
 
 // Use localhost instead of 0.0.0.0
-const API_BASE = 'http://localhost:8000';
+const API_BASE = '/api';
 
 function Dashboard({ onLogout }) {
   const [wheelSummary, setWheelSummary] = useState([]);

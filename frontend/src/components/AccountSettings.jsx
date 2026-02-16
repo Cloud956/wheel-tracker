@@ -3,7 +3,7 @@ import Cookies from 'js-cookie';
 import { useNavigate } from 'react-router-dom';
 import './AccountSettings.css';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = '/api';
 
 function AccountSettings({ onLogout }) {
   const [settings, setSettings] = useState({

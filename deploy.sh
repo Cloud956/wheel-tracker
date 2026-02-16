@@ -50,26 +50,15 @@ if [ "$PROFILE" = "dev" ]; then
     wheel-tracker-frontend:dev
 
 else
-  echo -e "${BLUE}Building images (PROD mode)...${NC}"
-  docker build -t wheel-tracker-backend:latest ./backend
-  docker build -t wheel-tracker-frontend:latest ./frontend
+  echo -e "${BLUE}Building and Starting containers (PROD mode) with Docker Compose...${NC}"
+  # Check if docker-compose is available, if not try 'docker compose' (v2)
+  if command -v docker-compose &> /dev/null; then
+    docker-compose -f docker-compose.prod.yml up -d --build
+  else
+    docker compose -f docker-compose.prod.yml up -d --build
+  fi
 
-  echo -e "${GREEN}Starting backend (PROD)...${NC}"
-  docker run -d \
-    --name wheel-tracker-backend \
-    --network wheel-tracker-network \
-    -p 8000:8000 \
-    -v wheel-tracker-backend-data:/data \
-    wheel-tracker-backend:latest
-
-  echo -e "${GREEN}Starting frontend (PROD)...${NC}"
-  docker run -d \
-    --name wheel-tracker-frontend \
-    --network wheel-tracker-network \
-    -p 3000:3000 \
-    wheel-tracker-frontend:latest
+  echo -e "\n${GREEN}✅ Deployment complete!${NC}"
+  echo "Application available at http://localhost (port 80)"
+  echo "Ensure your EC2 Security Group allows inbound traffic on port 80."
 fi
-
-echo -e "\n${GREEN}✅ Deployment complete!${NC}"
-echo "Backend: http://localhost:8000"
-echo "Frontend: http://localhost:3000"
