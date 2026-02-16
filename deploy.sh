@@ -23,8 +23,8 @@ NC='\033[0m'
 docker network create wheel-tracker-network 2>/dev/null || true
 
 echo -e "${YELLOW}Cleaning up existing containers...${NC}"
-docker stop wheel-tracker-backend wheel-tracker-frontend 2>/dev/null || true
-docker rm wheel-tracker-backend wheel-tracker-frontend 2>/dev/null || true
+docker stop wheel-tracker-backend wheel-tracker-frontend wheel-tracker-nginx 2>/dev/null || true
+docker rm wheel-tracker-backend wheel-tracker-frontend wheel-tracker-nginx 2>/dev/null || true
 
 if [ "$PROFILE" = "dev" ]; then
   echo -e "${CYAN}Building images (DEV mode)...${NC}"
