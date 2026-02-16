@@ -17,12 +17,24 @@ aws_region = os.getenv("AWS_REGION")
 aws_access_key = os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY")
 aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_ACCESS_TOKEN")
 
-dynamodb = boto3.resource(
-    'dynamodb',
-    region_name=aws_region,
-    aws_access_key_id=aws_access_key,
-    aws_secret_access_key=aws_secret_key
-)
+# Filter out empty strings if they are passed as ""
+if not aws_access_key:
+    aws_access_key = None
+if not aws_secret_key:
+    aws_secret_key = None
+if not aws_region:
+    aws_region = None # Boto3 will find region from config or metadata
+
+# Only pass credentials if explicitly provided (and not empty)
+# Otherwise boto3 will look for credentials in environment variables, ~/.aws/credentials, or IAM Role.
+boto3_kwargs = {'service_name': 'dynamodb'}
+if aws_region:
+    boto3_kwargs['region_name'] = aws_region
+if aws_access_key and aws_secret_key:
+    boto3_kwargs['aws_access_key_id'] = aws_access_key
+    boto3_kwargs['aws_secret_access_key'] = aws_secret_key
+
+dynamodb = boto3.resource(**boto3_kwargs)
 
 # Tables
 USER_TABLE_NAME = os.getenv("DYNAMODB_USER_TABLE_NAME", "UserConfigs")
