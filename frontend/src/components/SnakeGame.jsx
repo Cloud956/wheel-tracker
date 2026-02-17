@@ -69,22 +69,6 @@ function SnakeGame() {
     ctx.fillStyle = '#0f0f0f';
     ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-    // Grid lines (subtle)
-    ctx.strokeStyle = '#1a1a1a';
-    ctx.lineWidth = 0.5;
-    for (let x = 0; x <= GRID_W; x++) {
-      ctx.beginPath();
-      ctx.moveTo(x * CELL_SIZE, 0);
-      ctx.lineTo(x * CELL_SIZE, CANVAS_H);
-      ctx.stroke();
-    }
-    for (let y = 0; y <= GRID_H; y++) {
-      ctx.beginPath();
-      ctx.moveTo(0, y * CELL_SIZE);
-      ctx.lineTo(CANVAS_W, y * CELL_SIZE);
-      ctx.stroke();
-    }
-
     // Snake
     const snake = snakeRef.current;
     snake.forEach((seg, i) => {
@@ -209,14 +193,6 @@ function SnakeGame() {
   // Keyboard controls
   useEffect(() => {
     const handleKey = (e) => {
-      if (gameState !== 'playing') {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          startGame();
-        }
-        return;
-      }
-
       const dir = dirRef.current;
       switch (e.key) {
         case 'ArrowUp':
@@ -249,11 +225,13 @@ function SnakeGame() {
     };
 
     window.addEventListener('keydown', handleKey);
-    return () => {
-      window.removeEventListener('keydown', handleKey);
-      clearInterval(loopRef.current);
-    };
-  }, [gameState, startGame]);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
+  // Cleanup interval on unmount only
+  useEffect(() => {
+    return () => clearInterval(loopRef.current);
+  }, []);
 
   // Initial draw
   useEffect(() => {
