@@ -59,20 +59,26 @@ def merge_new_wheels(new_wheels: List[Wheel], existing_wheels: List[Wheel]) -> L
     return combined_wheels
 
 def recalculate_wheel_pnl(wheel: Wheel):
-    """Recalculates PnL and commissions for a wheel based on its trades."""
-    cash = 0.0
+    """Recalculates PnL and commissions for a wheel based on its trades.
+    
+    Separates:
+      - premium_collected: pure option cash flows (sold - bought), no commissions, no stock trades
+      - total_commissions: sum of all commissions (negative values from IBKR)
+      - total_pnl: premium_collected + total_commissions (realized cash result)
+    """
+    premium = 0.0
     comm = 0.0
     for ct in wheel.trades:
-        multiplier = 100.0
-        if ct.trade.asset_category == 'STK':
-            multiplier = 1.0  # Price is per share, quantity is shares.
-            
-        trade_cash = -(ct.trade.quantity * ct.trade.trade_price * multiplier) + ct.trade.ib_commission
-        cash += trade_cash
+        if ct.trade.asset_category == 'OPT':
+            # Option cash: selling (qty<0) gives positive cash, buying (qty>0) gives negative
+            premium += -(ct.trade.quantity * ct.trade.trade_price * 100.0)
+        # Stock trades don't contribute to premium — the P&L from shares
+        # is tracked via unrealized_pnl (strike vs current market price)
         comm += ct.trade.ib_commission
         
-    wheel.total_pnl = cash
+    wheel.premium_collected = premium
     wheel.total_commissions = comm
+    wheel.total_pnl = premium + comm  # Realized portion only
 
 
 def _find_open_wheel_for_trade(open_wheels_map: Dict[str, List[Wheel]], c_trade: CategorizedTrade) -> Optional[Wheel]:
@@ -254,97 +260,108 @@ def enrich_wheels_with_positions(wheels: List[Wheel], positions: List[Dict[str, 
         
         sym = wheel.symbol
         wheel.holdings = []  # Reset holdings
+        total_unrealized = 0.0
         
         if wheel.phase == WheelPhase.CSP.value:
-            # Look for a short put option position matching symbol + strike
+            # Short put: premium already in premium_collected
+            # Unrealized = cost to buy it back (negative = costs money to close)
             for opt_pos in option_positions.get(sym, []):
                 if (opt_pos.get('put_call') == 'P' 
                     and opt_pos.get('strike') == wheel.strike
                     and opt_pos['position'] < 0):  # Short put = negative position
                     multiplier = opt_pos.get('multiplier', 100)
+                    cost_to_close = opt_pos['mark_price'] * abs(opt_pos['position']) * multiplier
+                    put_unrealized = -cost_to_close  # Negative: costs money to close
+                    
                     wheel.market_price = opt_pos['mark_price']
                     wheel.cost_basis = opt_pos['cost_basis_price']
-                    wheel.current_value = opt_pos['mark_price'] * abs(opt_pos['position']) * multiplier
-                    wheel.unrealized_pnl = opt_pos['fifo_pnl_unrealized']
+                    total_unrealized += put_unrealized
+                    
+                    # For the holding, show what we sold it for vs what it costs now
                     wheel.holdings.append(Holding(
                         holding_type='SHORT_PUT',
                         symbol=sym,
                         quantity=opt_pos['position'],
                         purchase_price=opt_pos['cost_basis_price'],
                         current_price=opt_pos['mark_price'],
-                        unrealized_pnl=opt_pos['fifo_pnl_unrealized'],
+                        unrealized_pnl=put_unrealized,
                         strike=opt_pos.get('strike'),
                         multiplier=multiplier,
                     ))
                     break
+            
+            wheel.unrealized_pnl = total_unrealized
         
         elif wheel.phase == WheelPhase.SHARES_HELD.value:
-            # Look for a stock position matching the symbol
+            # Shares: use STRIKE as cost basis (not IBKR's adjusted cost basis)
             for stk_pos in stock_positions.get(sym, []):
                 if stk_pos['position'] > 0:  # Long shares
+                    share_unrealized = (stk_pos['mark_price'] - wheel.strike) * stk_pos['position']
+                    
                     wheel.market_price = stk_pos['mark_price']
-                    wheel.cost_basis = stk_pos['cost_basis_price']
-                    wheel.current_value = stk_pos['mark_price'] * stk_pos['position']
-                    wheel.unrealized_pnl = stk_pos['fifo_pnl_unrealized']
+                    wheel.cost_basis = wheel.strike  # Use strike, not IBKR's adjusted
+                    total_unrealized += share_unrealized
+                    
                     wheel.holdings.append(Holding(
                         holding_type='SHARES',
                         symbol=sym,
                         quantity=stk_pos['position'],
-                        purchase_price=stk_pos['cost_basis_price'],
+                        purchase_price=wheel.strike,  # Strike as cost basis
                         current_price=stk_pos['mark_price'],
-                        unrealized_pnl=stk_pos['fifo_pnl_unrealized'],
+                        unrealized_pnl=share_unrealized,
                         multiplier=1.0,
                     ))
                     break
+            
+            wheel.unrealized_pnl = total_unrealized
         
         elif wheel.phase == WheelPhase.COVERED_CALL.value:
-            # Composite: stock position value + short call position value
-            total_value = 0.0
-            total_unrealized = 0.0
-            matched_stock = False
+            # Composite: shares (strike-based) + short call (cost-to-close)
             
-            # Stock leg
+            # Stock leg: use strike as cost basis
             for stk_pos in stock_positions.get(sym, []):
                 if stk_pos['position'] > 0:
-                    wheel.market_price = stk_pos['mark_price']  # Stock price is the key reference
-                    wheel.cost_basis = stk_pos['cost_basis_price']
-                    total_value += stk_pos['mark_price'] * stk_pos['position']
-                    total_unrealized += stk_pos['fifo_pnl_unrealized']
-                    matched_stock = True
+                    share_unrealized = (stk_pos['mark_price'] - wheel.strike) * stk_pos['position']
+                    
+                    wheel.market_price = stk_pos['mark_price']
+                    wheel.cost_basis = wheel.strike
+                    total_unrealized += share_unrealized
+                    
                     wheel.holdings.append(Holding(
                         holding_type='SHARES',
                         symbol=sym,
                         quantity=stk_pos['position'],
-                        purchase_price=stk_pos['cost_basis_price'],
+                        purchase_price=wheel.strike,  # Strike as cost basis
                         current_price=stk_pos['mark_price'],
-                        unrealized_pnl=stk_pos['fifo_pnl_unrealized'],
+                        unrealized_pnl=share_unrealized,
                         multiplier=1.0,
                     ))
                     break
             
-            # Short call leg (if we have a currentSoldCall with known strike)
+            # Short call leg: premium already in premium_collected
+            # Unrealized = cost to buy it back (negative)
             if wheel.currentSoldCall:
                 for opt_pos in option_positions.get(sym, []):
                     if (opt_pos.get('put_call') == 'C'
                         and opt_pos.get('strike') == wheel.currentSoldCall.strike
                         and opt_pos['position'] < 0):  # Short call
                         multiplier = opt_pos.get('multiplier', 100)
-                        total_value += opt_pos['mark_price'] * abs(opt_pos['position']) * multiplier
-                        total_unrealized += opt_pos['fifo_pnl_unrealized']
+                        cost_to_close = opt_pos['mark_price'] * abs(opt_pos['position']) * multiplier
+                        call_unrealized = -cost_to_close
+                        total_unrealized += call_unrealized
+                        
                         wheel.holdings.append(Holding(
                             holding_type='SHORT_CALL',
                             symbol=sym,
                             quantity=opt_pos['position'],
                             purchase_price=opt_pos['cost_basis_price'],
                             current_price=opt_pos['mark_price'],
-                            unrealized_pnl=opt_pos['fifo_pnl_unrealized'],
+                            unrealized_pnl=call_unrealized,
                             strike=opt_pos.get('strike'),
                             multiplier=multiplier,
                         ))
                         break
             
-            if matched_stock:
-                wheel.current_value = total_value
-                wheel.unrealized_pnl = total_unrealized
+            wheel.unrealized_pnl = total_unrealized
     
     return wheels

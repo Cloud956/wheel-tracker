@@ -240,11 +240,11 @@ def get_wheels(username: str) -> List[Wheel]:
                     phase=item.get('phase', 'CSP'),
                     trades=trades,
                     total_pnl=float(item.get('total_pnl', 0)),
+                    premium_collected=float(item.get('premium_collected', 0)),
                     total_commissions=float(item.get('total_commissions', 0)),
                     currentSoldCall=current_sold_call,
                     market_price=float(item['market_price']) if item.get('market_price') is not None else None,
                     cost_basis=float(item['cost_basis']) if item.get('cost_basis') is not None else None,
-                    current_value=float(item['current_value']) if item.get('current_value') is not None else None,
                     unrealized_pnl=float(item['unrealized_pnl']) if item.get('unrealized_pnl') is not None else None,
                     holdings=holdings,
                 )

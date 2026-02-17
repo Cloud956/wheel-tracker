@@ -72,14 +72,14 @@ const WheelSummaryTable = ({ data }) => {
         ),
       },
       {
-        accessorKey: 'pnl',
-        header: 'Net Result',
+        accessorKey: 'premiumCollected',
+        header: 'Premium',
         enableSorting: true,
         cell: ({ getValue }) => {
-          const pnl = getValue()
+          const val = getValue()
           return (
-            <span className={pnl?.class || ''}>
-              {pnl?.value || '—'}
+            <span className={val?.class || ''}>
+              {val?.value || '—'}
             </span>
           )
         },
@@ -99,13 +99,16 @@ const WheelSummaryTable = ({ data }) => {
         },
       },
       {
-        accessorKey: 'currentValue',
-        header: 'Position Value',
+        accessorKey: 'currentPnl',
+        header: 'Current PnL',
         enableSorting: true,
-        cell: ({ row }) => {
-          const val = row.original.currentValue
-          if (!row.original.isOpen || !val) return <span style={{ color: '#555' }}>—</span>
-          return <span>{val?.value || '—'}</span>
+        cell: ({ getValue }) => {
+          const val = getValue()
+          return (
+            <span className={val?.class || ''}>
+              {val?.value || '—'}
+            </span>
+          )
         },
       },
       {

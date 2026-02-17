@@ -150,8 +150,11 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
     wheels_data.sort(key=lambda x: x.start_date, reverse=True)
     
     for idx, w in enumerate(wheels_data):
-        total_pnl = w.total_pnl
         total_comm = w.total_commissions
+        premium = w.premium_collected
+        unrealized = w.unrealized_pnl or 0.0
+        # Current PnL = Premium + Unrealized + Commissions (comms are negative from IBKR)
+        current_pnl = premium + unrealized + total_comm
         
         # Parse dates for cleaner display
         s_date = w.start_date.isoformat().split('T')[0]
@@ -164,16 +167,15 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
             "strike": w.strike,
             "startDate": s_date,
             "endDate": e_date,
-            "netCash": total_pnl, # PnL is essentially net cash flow in this model
             "isOpen": w.is_open,
             "phase": w.phase,
             "currentSoldCall": w.currentSoldCall.dict() if w.currentSoldCall else None,
-            "pnl": format_currency(total_pnl),
+            "premiumCollected": format_currency(premium),
             "comm": format_currency(total_comm),
             "marketPrice": w.market_price,
             "costBasis": w.cost_basis,
-            "currentValue": format_currency(w.current_value) if w.current_value is not None else None,
-            "unrealizedPnl": format_currency(w.unrealized_pnl) if w.unrealized_pnl is not None else None,
+            "unrealizedPnl": format_currency(unrealized) if w.is_open and w.unrealized_pnl is not None else None,
+            "currentPnl": format_currency(current_pnl),
             "holdings": [
                 {
                     "type": h.holding_type,

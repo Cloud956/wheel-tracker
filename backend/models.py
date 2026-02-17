@@ -60,11 +60,11 @@ class Wheel(BaseModel):
     phase: str = WheelPhase.CSP.value  # Track lifecycle phase
     trades: List[CategorizedTrade] = []
     total_pnl: float = 0.0
+    premium_collected: float = 0.0              # Pure option premium cash flows (no comms, no stock)
     total_commissions: float = 0.0
     currentSoldCall: Optional[Trade] = None
     # Current position / market value fields (populated from OpenPosition data)
     market_price: Optional[float] = None      # Current mark price of the held position
     cost_basis: Optional[float] = None         # Cost basis per share/contract
-    current_value: Optional[float] = None      # Total current market value of the position
-    unrealized_pnl: Optional[float] = None     # FIFO unrealized P&L from IBKR
+    unrealized_pnl: Optional[float] = None     # Unrealized P&L (strike-based for shares, cost-to-close for options)
     holdings: List[Holding] = []               # Individual held positions (shares, short calls, etc.)
