@@ -244,6 +244,10 @@ function SnakeGame() {
   // Keyboard controls
   useEffect(() => {
     const handleKey = (e) => {
+      // Don't intercept WASD when typing in an input field
+      const tag = e.target.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
       const dir = dirRef.current;
       switch (e.key) {
         case 'ArrowUp':
