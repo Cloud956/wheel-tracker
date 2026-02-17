@@ -1,4 +1,5 @@
 from typing import List, Optional
+from fastapi import HTTPException
 from models import Trade, CategorizedTrade, ActionType
 import requests
 import time

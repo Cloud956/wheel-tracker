@@ -229,6 +229,7 @@ def get_wheels(username: str) -> List[Wheel]:
                     start_date=start_dt,
                     end_date=end_dt,
                     is_open=item.get('is_open', True),
+                    phase=item.get('phase', 'CSP'),
                     trades=trades,
                     total_pnl=float(item.get('total_pnl', 0)),
                     total_commissions=float(item.get('total_commissions', 0)),

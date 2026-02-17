@@ -34,6 +34,11 @@ class CategorizedTrade(BaseModel):
     category: ActionType
     related_trade_id: Optional[str] = None # ID of the stock trade if assignment
 
+class WheelPhase(Enum):
+    CSP = "CSP"                    # Cash-Secured Put sold, waiting for expiry/assignment/buyback
+    SHARES_HELD = "SHARES_HELD"    # Put was assigned, holding shares, waiting to sell a call
+    COVERED_CALL = "COVERED_CALL"  # Covered call sold on held shares
+
 class Wheel(BaseModel):
     wheel_id: str
     symbol: str
@@ -41,6 +46,7 @@ class Wheel(BaseModel):
     start_date: datetime
     end_date: Optional[datetime] = None
     is_open: bool = True
+    phase: str = WheelPhase.CSP.value  # Track lifecycle phase
     trades: List[CategorizedTrade] = []
     total_pnl: float = 0.0
     total_commissions: float = 0.0

@@ -12,7 +12,7 @@ from datetime import datetime
 from database import get_user_config, save_wheels, get_wheels, delete_user_wheels
 from trade_categorizer import categorize_trades, fetch_and_parse_trades
 from models import Trade, ActionType
-from wheel_analyzer import analyze_wheels, identify_new_wheels, merge_new_wheels, close_wheels
+from wheel_analyzer import identify_new_wheels, merge_new_wheels, process_wheels
 
 load_dotenv()
 app = FastAPI()
@@ -68,8 +68,8 @@ def sync_data(user: dict = Depends(verify_token)):
         # 5. Merge New Wheels with Existing (Existing is empty now)
         wheels = new_wheels # merge_new_wheels(new_wheels, []) 
         
-        # 6. Update Wheels with other trades (Close/Update actions)
-        wheels = close_wheels(wheels, categorized)
+        # 6. Update Wheels with other trades (Assignment, Covered Call, Close, etc.)
+        wheels = process_wheels(wheels, categorized)
         
         # 7. Save Wheels to DynamoDB
         # We convert the Pydantic models to dicts for saving
@@ -158,6 +158,7 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
             "endDate": e_date,
             "netCash": total_pnl, # PnL is essentially net cash flow in this model
             "isOpen": w.is_open,
+            "phase": w.phase,
             "currentSoldCall": w.currentSoldCall.dict() if w.currentSoldCall else None,
             "pnl": format_currency(total_pnl),
             "comm": format_currency(total_comm),
