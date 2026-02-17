@@ -10,11 +10,11 @@ import pandas as pd
 import io
 from datetime import datetime
 from database import get_user_config, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores
-from trade_categorizer import categorize_trades, fetch_and_parse_trades
+from trade_categorizer import categorize_trades, fetch_flex_report, parse_trades_from_xml, parse_positions_from_xml
 from models import Trade, ActionType
 from pydantic import BaseModel
 from typing import Optional, Dict
-from wheel_analyzer import identify_new_wheels, merge_new_wheels, process_wheels
+from wheel_analyzer import identify_new_wheels, merge_new_wheels, process_wheels, enrich_wheels_with_positions
 
 load_dotenv()
 app = FastAPI()
@@ -52,7 +52,10 @@ def sync_data(user: dict = Depends(verify_token)):
         
     # 2. Run Flex Query & Parse Data
     try:
-        trades_list = fetch_and_parse_trades(ibkr_token, ibkr_query_id)
+        # Fetch XML once, parse trades AND positions from it
+        xml_content = fetch_flex_report(ibkr_token, ibkr_query_id)
+        trades_list = parse_trades_from_xml(xml_content)
+        positions_list = parse_positions_from_xml(xml_content)
         
         if not trades_list:
              return {"status": "success", "message": "No trades found in Flex Report", "categorized_trades": []}
@@ -73,7 +76,10 @@ def sync_data(user: dict = Depends(verify_token)):
         # 6. Update Wheels with other trades (Assignment, Covered Call, Close, etc.)
         wheels = process_wheels(wheels, categorized)
         
-        # 7. Save Wheels to DynamoDB
+        # 7. Enrich open wheels with current position / market value data
+        wheels = enrich_wheels_with_positions(wheels, positions_list)
+        
+        # 8. Save Wheels to DynamoDB
         # We convert the Pydantic models to dicts for saving
         # The database module handles type conversion (datetime->str, float->Decimal)
         wheels_data = [w.dict() for w in wheels]
@@ -164,6 +170,22 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
             "currentSoldCall": w.currentSoldCall.dict() if w.currentSoldCall else None,
             "pnl": format_currency(total_pnl),
             "comm": format_currency(total_comm),
+            "marketPrice": w.market_price,
+            "costBasis": w.cost_basis,
+            "currentValue": format_currency(w.current_value) if w.current_value is not None else None,
+            "unrealizedPnl": format_currency(w.unrealized_pnl) if w.unrealized_pnl is not None else None,
+            "holdings": [
+                {
+                    "type": h.holding_type,
+                    "symbol": h.symbol,
+                    "quantity": h.quantity,
+                    "purchasePrice": h.purchase_price,
+                    "currentPrice": h.current_price,
+                    "unrealizedPnl": format_currency(h.unrealized_pnl),
+                    "strike": h.strike,
+                    "multiplier": h.multiplier,
+                } for h in w.holdings
+            ] if w.holdings else [],
             "trades": [
                 {
                     "date": t.trade.datetime.isoformat().split('T')[0],

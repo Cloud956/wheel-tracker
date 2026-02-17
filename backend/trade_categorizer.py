@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import HTTPException
 from models import Trade, CategorizedTrade, ActionType
 import requests
@@ -7,14 +7,15 @@ import pandas as pd
 import io
 from datetime import datetime, timedelta
 
-def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
+
+def fetch_flex_report(token: str, query_id: str) -> str:
     """
-    Calls IBKR Flex API, gets the report, parses XML, and returns a list of Trade objects.
+    Calls IBKR Flex API and returns the raw XML content.
+    Separated from parsing so the same XML can be used for trades AND positions.
     """
     send_url = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest"
     get_url = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/GetStatement"
     
-    # Send Request
     resp = requests.get(send_url, params={'t': token, 'q': query_id, 'v': "3"})
     if "<ReferenceCode>" not in resp.text:
         error_msg = f"IBKR Flex Request Failed. Response: {resp.text[:200]}"
@@ -23,47 +24,97 @@ def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
     
     ref_code = resp.text.split("<ReferenceCode>")[1].split("</ReferenceCode>")[0]
     
-    # Wait for report generation
-    # IBKR documentation recommends retrying with exponential backoff
     retry_count = 0
     max_retries = 20
     xml_content = None
     
     while retry_count < max_retries:
-        sleep_time = 2 + (retry_count * 3) # Increases wait time
+        sleep_time = 2 + (retry_count * 3)
         print(f"Waiting {sleep_time}s for Flex Report (Attempt {retry_count+1}/{max_retries})...")
         time.sleep(sleep_time)
         
         report_resp = requests.get(get_url, params={'t': token, 'q': ref_code, 'v': "3"})
         
-        # Check for success indicators
-        if "<FlexStatement" in report_resp.text: # <FlexStatement> is standard root or child
+        if "<FlexStatement" in report_resp.text:
             xml_content = report_resp.text
             break
             
         if "<ErrorCode>" in report_resp.text:
-            # If it's just 'Statement generation in progress', we continue
-            if "1019" in report_resp.text: # Code for 'Statement generation in progress'
+            if "1019" in report_resp.text:
                 print("Report generation in progress...")
-                pass
             else:
-                # Real error output for debugging
                 print(f"Flex Query Fatal Error: {report_resp.text}")
                 break
         else:
-             # Weird state or just empty
              print(f"Unexpected Response: {report_resp.text[:200]}")
         
         retry_count += 1
         
     if not xml_content:
         raise HTTPException(status_code=500, detail="Failed to retrieve Flex Report after retries")
+    
+    return xml_content
 
-    # Use pandas to parse XML
+
+def parse_positions_from_xml(xml_content: str) -> List[Dict[str, Any]]:
+    """
+    Parses <OpenPosition> elements from the Flex Query XML.
+    Returns a list of dicts with: symbol, asset_category, put_call, strike,
+    position, mark_price, cost_basis_price, fifo_pnl_unrealized, multiplier.
+    """
+    try:
+        df_pos = pd.read_xml(io.StringIO(xml_content), xpath=".//OpenPosition")
+    except ValueError:
+        return []  # No OpenPosition elements in the XML
+    
+    if df_pos.empty:
+        return []
+    
+    positions = []
+    for _, row in df_pos.iterrows():
+        try:
+            symbol = str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN')))
+            asset_category = str(row.get('assetCategory', 'UNKNOWN'))
+            put_call = str(row.get('putCall', '')) if pd.notna(row.get('putCall')) else None
+            
+            strike_val = None
+            if pd.notna(row.get('strike')):
+                try:
+                    strike_val = float(row['strike'])
+                except (ValueError, TypeError):
+                    pass
+            
+            position_qty = float(row.get('position', 0))
+            mark_price = float(row.get('markPrice', 0))
+            cost_basis_price = float(row.get('costBasisPrice', 0))
+            fifo_pnl_unrealized = float(row.get('fifoPnlUnrealized', 0))
+            multiplier = float(row.get('multiplier', 1))
+            
+            positions.append({
+                'symbol': symbol,
+                'asset_category': asset_category,
+                'put_call': put_call,
+                'strike': strike_val,
+                'position': position_qty,
+                'mark_price': mark_price,
+                'cost_basis_price': cost_basis_price,
+                'fifo_pnl_unrealized': fifo_pnl_unrealized,
+                'multiplier': multiplier,
+            })
+        except Exception as e:
+            print(f"Error parsing position row: {e}")
+            continue
+    
+    return positions
+
+
+def parse_trades_from_xml(xml_content: str) -> List[Trade]:
+    """
+    Parses <Trade> elements from the Flex Query XML into Trade objects.
+    """
     try:
         df_trades = pd.read_xml(io.StringIO(xml_content), xpath=".//Trade")
     except ValueError:
-         # Handle case where XML is valid but has no Trade elements
          return []
     
     if df_trades.empty:
@@ -147,6 +198,16 @@ def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
         trades_list.append(trade)
 
     return trades_list
+
+
+def fetch_and_parse_trades(token: str, query_id: str) -> List[Trade]:
+    """
+    Backward-compatible wrapper: fetches Flex Report and parses trades.
+    For the new flow, use fetch_flex_report() + parse_trades_from_xml() separately.
+    """
+    xml_content = fetch_flex_report(token, query_id)
+    return parse_trades_from_xml(xml_content)
+
 
 def categorize_trades(trades: List[Trade]) -> List[CategorizedTrade]:
     """

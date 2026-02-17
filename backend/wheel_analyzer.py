@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from pydantic import BaseModel
-from models import CategorizedTrade, ActionType, Wheel, WheelPhase
+from models import CategorizedTrade, ActionType, Wheel, WheelPhase, Holding
 
 def identify_new_wheels(categorized_trades: List[CategorizedTrade], username: str) -> List[Wheel]:
     """
@@ -218,4 +218,133 @@ def process_wheels(wheels: List[Wheel], categorized_trades: List[CategorizedTrad
     for w in wheels:
         recalculate_wheel_pnl(w)
         
+    return wheels
+
+
+def enrich_wheels_with_positions(wheels: List[Wheel], positions: List[Dict[str, Any]]) -> List[Wheel]:
+    """
+    Enriches open wheels with current market data from OpenPosition entries.
+    
+    Matching logic by wheel phase:
+      - CSP:           match short put position (same symbol, put_call='P', strike matches)
+      - SHARES_HELD:   match stock position (same symbol, asset_category='STK')
+      - COVERED_CALL:  match stock position + short call position for composite view
+    
+    For closed wheels, position fields stay None (no live position to track).
+    """
+    if not positions:
+        return wheels
+    
+    # Build lookup indices by symbol
+    # Stock positions: symbol → position dict
+    stock_positions: Dict[str, List[Dict[str, Any]]] = {}
+    # Option positions: (symbol, put_call, strike) → position dict
+    option_positions: Dict[str, List[Dict[str, Any]]] = {}
+    
+    for pos in positions:
+        sym = pos['symbol']
+        if pos['asset_category'] == 'STK':
+            stock_positions.setdefault(sym, []).append(pos)
+        elif pos['asset_category'] == 'OPT':
+            option_positions.setdefault(sym, []).append(pos)
+    
+    for wheel in wheels:
+        if not wheel.is_open:
+            continue  # No live position for closed wheels
+        
+        sym = wheel.symbol
+        wheel.holdings = []  # Reset holdings
+        
+        if wheel.phase == WheelPhase.CSP.value:
+            # Look for a short put option position matching symbol + strike
+            for opt_pos in option_positions.get(sym, []):
+                if (opt_pos.get('put_call') == 'P' 
+                    and opt_pos.get('strike') == wheel.strike
+                    and opt_pos['position'] < 0):  # Short put = negative position
+                    multiplier = opt_pos.get('multiplier', 100)
+                    wheel.market_price = opt_pos['mark_price']
+                    wheel.cost_basis = opt_pos['cost_basis_price']
+                    wheel.current_value = opt_pos['mark_price'] * abs(opt_pos['position']) * multiplier
+                    wheel.unrealized_pnl = opt_pos['fifo_pnl_unrealized']
+                    wheel.holdings.append(Holding(
+                        holding_type='SHORT_PUT',
+                        symbol=sym,
+                        quantity=opt_pos['position'],
+                        purchase_price=opt_pos['cost_basis_price'],
+                        current_price=opt_pos['mark_price'],
+                        unrealized_pnl=opt_pos['fifo_pnl_unrealized'],
+                        strike=opt_pos.get('strike'),
+                        multiplier=multiplier,
+                    ))
+                    break
+        
+        elif wheel.phase == WheelPhase.SHARES_HELD.value:
+            # Look for a stock position matching the symbol
+            for stk_pos in stock_positions.get(sym, []):
+                if stk_pos['position'] > 0:  # Long shares
+                    wheel.market_price = stk_pos['mark_price']
+                    wheel.cost_basis = stk_pos['cost_basis_price']
+                    wheel.current_value = stk_pos['mark_price'] * stk_pos['position']
+                    wheel.unrealized_pnl = stk_pos['fifo_pnl_unrealized']
+                    wheel.holdings.append(Holding(
+                        holding_type='SHARES',
+                        symbol=sym,
+                        quantity=stk_pos['position'],
+                        purchase_price=stk_pos['cost_basis_price'],
+                        current_price=stk_pos['mark_price'],
+                        unrealized_pnl=stk_pos['fifo_pnl_unrealized'],
+                        multiplier=1.0,
+                    ))
+                    break
+        
+        elif wheel.phase == WheelPhase.COVERED_CALL.value:
+            # Composite: stock position value + short call position value
+            total_value = 0.0
+            total_unrealized = 0.0
+            matched_stock = False
+            
+            # Stock leg
+            for stk_pos in stock_positions.get(sym, []):
+                if stk_pos['position'] > 0:
+                    wheel.market_price = stk_pos['mark_price']  # Stock price is the key reference
+                    wheel.cost_basis = stk_pos['cost_basis_price']
+                    total_value += stk_pos['mark_price'] * stk_pos['position']
+                    total_unrealized += stk_pos['fifo_pnl_unrealized']
+                    matched_stock = True
+                    wheel.holdings.append(Holding(
+                        holding_type='SHARES',
+                        symbol=sym,
+                        quantity=stk_pos['position'],
+                        purchase_price=stk_pos['cost_basis_price'],
+                        current_price=stk_pos['mark_price'],
+                        unrealized_pnl=stk_pos['fifo_pnl_unrealized'],
+                        multiplier=1.0,
+                    ))
+                    break
+            
+            # Short call leg (if we have a currentSoldCall with known strike)
+            if wheel.currentSoldCall:
+                for opt_pos in option_positions.get(sym, []):
+                    if (opt_pos.get('put_call') == 'C'
+                        and opt_pos.get('strike') == wheel.currentSoldCall.strike
+                        and opt_pos['position'] < 0):  # Short call
+                        multiplier = opt_pos.get('multiplier', 100)
+                        total_value += opt_pos['mark_price'] * abs(opt_pos['position']) * multiplier
+                        total_unrealized += opt_pos['fifo_pnl_unrealized']
+                        wheel.holdings.append(Holding(
+                            holding_type='SHORT_CALL',
+                            symbol=sym,
+                            quantity=opt_pos['position'],
+                            purchase_price=opt_pos['cost_basis_price'],
+                            current_price=opt_pos['mark_price'],
+                            unrealized_pnl=opt_pos['fifo_pnl_unrealized'],
+                            strike=opt_pos.get('strike'),
+                            multiplier=multiplier,
+                        ))
+                        break
+            
+            if matched_stock:
+                wheel.current_value = total_value
+                wheel.unrealized_pnl = total_unrealized
+    
     return wheels

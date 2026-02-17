@@ -108,7 +108,7 @@ def _convert_for_dynamodb(obj: Any) -> Any:
     if isinstance(obj, list):
         return [_convert_for_dynamodb(i) for i in obj]
     if isinstance(obj, dict):
-        return {k: _convert_for_dynamodb(v) for k, v in obj.items()}
+        return {k: _convert_for_dynamodb(v) for k, v in obj.items() if v is not None}
     return obj
 
 def save_wheels(username: str, wheels: List[Dict[str, Any]]) -> int:
@@ -223,6 +223,13 @@ def get_wheels(username: str) -> List[Wheel]:
                 if item.get('currentSoldCall'):
                     current_sold_call = Trade(**item['currentSoldCall'])
 
+                # Reconstruct holdings if present
+                holdings = []
+                if 'holdings' in item:
+                    from models import Holding
+                    for h_data in item['holdings']:
+                        holdings.append(Holding(**h_data))
+
                 wheel = Wheel(
                     wheel_id=item['wheel_id'],
                     symbol=item['symbol'],
@@ -234,7 +241,12 @@ def get_wheels(username: str) -> List[Wheel]:
                     trades=trades,
                     total_pnl=float(item.get('total_pnl', 0)),
                     total_commissions=float(item.get('total_commissions', 0)),
-                    currentSoldCall=current_sold_call
+                    currentSoldCall=current_sold_call,
+                    market_price=float(item['market_price']) if item.get('market_price') is not None else None,
+                    cost_basis=float(item['cost_basis']) if item.get('cost_basis') is not None else None,
+                    current_value=float(item['current_value']) if item.get('current_value') is not None else None,
+                    unrealized_pnl=float(item['unrealized_pnl']) if item.get('unrealized_pnl') is not None else None,
+                    holdings=holdings,
                 )
                 wheels.append(wheel)
             except Exception as e:

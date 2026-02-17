@@ -85,6 +85,30 @@ const WheelSummaryTable = ({ data }) => {
         },
       },
       {
+        accessorKey: 'unrealizedPnl',
+        header: 'Unrealized',
+        enableSorting: true,
+        cell: ({ row }) => {
+          const val = row.original.unrealizedPnl
+          if (!row.original.isOpen || !val) return <span style={{ color: '#555' }}>—</span>
+          return (
+            <span className={val?.class || ''}>
+              {val?.value || '—'}
+            </span>
+          )
+        },
+      },
+      {
+        accessorKey: 'currentValue',
+        header: 'Position Value',
+        enableSorting: true,
+        cell: ({ row }) => {
+          const val = row.original.currentValue
+          if (!row.original.isOpen || !val) return <span style={{ color: '#555' }}>—</span>
+          return <span>{val?.value || '—'}</span>
+        },
+      },
+      {
         accessorKey: 'isOpen',
         header: 'Status',
         enableSorting: true,
@@ -165,6 +189,70 @@ const WheelSummaryTable = ({ data }) => {
                 <tr>
                   <td colSpan={row.getVisibleCells().length} style={{ padding: 0 }}>
                     <div className="expanded-row-content" style={{ padding: '15px', backgroundColor: '#2a2a40', borderTop: '1px solid #444' }}>
+
+                      {/* Current Holdings section for open wheels */}
+                      {row.original.isOpen && row.original.holdings && row.original.holdings.length > 0 && (
+                        <div style={{ marginBottom: '16px' }}>
+                          <h4 style={{ margin: '0 0 10px 0', color: '#00ff88' }}>📊 Current Holdings — {row.original.phase === 'CSP' ? 'Cash-Secured Put' : row.original.phase === 'SHARES_HELD' ? 'Shares Held' : row.original.phase === 'COVERED_CALL' ? 'Covered Call' : row.original.phase}</h4>
+                          <table style={{ width: '100%', fontSize: '0.85em', background: 'transparent' }}>
+                            <thead>
+                              <tr style={{ background: '#1a3a2a' }}>
+                                <th style={{ padding: '8px', textAlign: 'left' }}>Position</th>
+                                <th style={{ padding: '8px', textAlign: 'right' }}>Qty</th>
+                                <th style={{ padding: '8px', textAlign: 'right' }}>Price at Open</th>
+                                <th style={{ padding: '8px', textAlign: 'right' }}>Current Price</th>
+                                <th style={{ padding: '8px', textAlign: 'right' }}>Change</th>
+                                <th style={{ padding: '8px', textAlign: 'right' }}>Unrealized P&L</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {row.original.holdings.map((h, idx) => {
+                                const label = h.type === 'SHARES'
+                                  ? `${h.symbol} Shares`
+                                  : h.type === 'SHORT_CALL'
+                                    ? `Short Call ${h.symbol} $${h.strike}`
+                                    : h.type === 'SHORT_PUT'
+                                      ? `Short Put ${h.symbol} $${h.strike}`
+                                      : h.type
+                                const priceDiff = h.currentPrice - h.purchasePrice
+                                const pricePct = h.purchasePrice !== 0 ? ((priceDiff / h.purchasePrice) * 100).toFixed(1) : '0.0'
+                                // For short positions, price going DOWN is good
+                                const isShort = h.type === 'SHORT_CALL' || h.type === 'SHORT_PUT'
+                                const changeIsGood = isShort ? priceDiff <= 0 : priceDiff >= 0
+                                const changeClass = changeIsGood ? 'text-green' : 'text-red'
+                                const pnlClass = h.unrealizedPnl?.raw >= 0 ? 'text-green' : 'text-red'
+                                const changeSign = priceDiff >= 0 ? '+' : ''
+                                return (
+                                  <tr key={idx} style={{ background: 'rgba(0,255,136,0.05)' }}>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #333', fontWeight: 'bold' }}>{label}</td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #333', textAlign: 'right' }}>{h.quantity}</td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #333', textAlign: 'right' }}>${h.purchasePrice?.toFixed(2)}</td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #333', textAlign: 'right', fontWeight: 'bold' }}>${h.currentPrice?.toFixed(2)}</td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #333', textAlign: 'right' }} className={changeClass}>
+                                      {changeSign}{priceDiff.toFixed(2)} ({changeSign}{pricePct}%)
+                                    </td>
+                                    <td style={{ padding: '8px', borderBottom: '1px solid #333', textAlign: 'right', fontWeight: 'bold' }} className={pnlClass}>
+                                      {h.unrealizedPnl?.value || '—'}
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                              {/* Total unrealized P&L row */}
+                              {row.original.holdings.length > 0 && row.original.unrealizedPnl && (
+                                <tr style={{ background: 'rgba(0,255,136,0.1)', borderTop: '2px solid #444' }}>
+                                  <td colSpan={5} style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold', color: '#ccc' }}>
+                                    Total Unrealized:
+                                  </td>
+                                  <td style={{ padding: '8px', textAlign: 'right', fontWeight: 'bold' }} className={row.original.unrealizedPnl?.class || ''}>
+                                    {row.original.unrealizedPnl?.value || '—'}
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
                       <h4 style={{ margin: '0 0 10px 0', color: '#ccc' }}>Trades for Wheel #{row.original.wheelNum}</h4>
                       <table style={{ width: '100%', fontSize: '0.85em', background: 'transparent' }}>
                         <thead>

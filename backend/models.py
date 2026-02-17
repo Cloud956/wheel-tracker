@@ -39,6 +39,17 @@ class WheelPhase(Enum):
     SHARES_HELD = "SHARES_HELD"    # Put was assigned, holding shares, waiting to sell a call
     COVERED_CALL = "COVERED_CALL"  # Covered call sold on held shares
 
+class Holding(BaseModel):
+    """Represents a currently held position within a wheel."""
+    holding_type: str          # 'SHARES' or 'SHORT_CALL' or 'SHORT_PUT'
+    symbol: str
+    quantity: float            # e.g. 100 shares or -1 contract
+    purchase_price: float      # Price at which it was acquired (cost basis per unit)
+    current_price: float       # Current mark price
+    unrealized_pnl: float      # Unrealized P&L on this specific holding
+    strike: Optional[float] = None  # For options
+    multiplier: float = 1.0    # 1 for stock, 100 for options
+
 class Wheel(BaseModel):
     wheel_id: str
     symbol: str
@@ -51,3 +62,9 @@ class Wheel(BaseModel):
     total_pnl: float = 0.0
     total_commissions: float = 0.0
     currentSoldCall: Optional[Trade] = None
+    # Current position / market value fields (populated from OpenPosition data)
+    market_price: Optional[float] = None      # Current mark price of the held position
+    cost_basis: Optional[float] = None         # Cost basis per share/contract
+    current_value: Optional[float] = None      # Total current market value of the position
+    unrealized_pnl: Optional[float] = None     # FIFO unrealized P&L from IBKR
+    holdings: List[Holding] = []               # Individual held positions (shares, short calls, etc.)
