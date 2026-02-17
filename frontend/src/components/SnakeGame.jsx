@@ -13,9 +13,9 @@ const MAG7 = [
   { ticker: 'TSLA',  color: '#cc0000', bg: '#1a0a0a', icon: 'T' },
 ];
 
-const CELL_SIZE = 28;
-const GRID_W = 28;
-const GRID_H = 22;
+const CELL_SIZE = 22;
+const GRID_W = 36;
+const GRID_H = 28;
 const CANVAS_W = GRID_W * CELL_SIZE;
 const CANVAS_H = GRID_H * CELL_SIZE;
 
@@ -44,7 +44,7 @@ function SnakeGame() {
   const navigate = useNavigate();
 
   // Game state refs (not React state — to avoid re-renders on every tick)
-  const snakeRef = useRef([{ x: 14, y: 11 }]);
+  const snakeRef = useRef([{ x: 18, y: 14 }]);
   const dirRef = useRef({ x: 1, y: 0 });
   const nextDirRef = useRef({ x: 1, y: 0 });
   const foodRef = useRef({ ...randomFoodPos([{ x: 15, y: 15 }]), stock: randomStock() });
@@ -115,7 +115,7 @@ function SnakeGame() {
 
     // Ticker text
     ctx.fillStyle = stock.color;
-    ctx.font = 'bold 10px monospace';
+    ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(stock.ticker.slice(0, 4), fx + CELL_SIZE / 2, fy + CELL_SIZE / 2);
@@ -174,10 +174,10 @@ function SnakeGame() {
   }, [draw, highScore]);
 
   const startGame = useCallback(() => {
-    snakeRef.current = [{ x: 14, y: 11 }];
+    snakeRef.current = [{ x: 18, y: 14 }];
     dirRef.current = { x: 1, y: 0 };
     nextDirRef.current = { x: 1, y: 0 };
-    foodRef.current = { ...randomFoodPos([{ x: 14, y: 11 }]), stock: randomStock() };
+    foodRef.current = { ...randomFoodPos([{ x: 18, y: 14 }]), stock: randomStock() };
     scoreRef.current = 0;
     speedRef.current = INITIAL_SPEED;
     collectedRef.current = {};
