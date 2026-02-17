@@ -124,7 +124,7 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
     conn.close()
     
     if df.empty: return []
-
+l
     wheel_instances = []
     last_instance_by_symbol = {} 
     counter = 1

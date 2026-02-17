@@ -4,6 +4,7 @@ import Cookies from 'js-cookie';
 import Login from './components/logins/login';
 import Dashboard from './components/Dashboard';
 import AccountSettings from './components/AccountSettings';
+import SnakeGame from './components/SnakeGame';
 import './App.css';
 
 function App() {
@@ -64,6 +65,16 @@ function App() {
             element={
               isAuthenticated ? (
                 <AccountSettings onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            } 
+          />
+          <Route 
+            path="/snake" 
+            element={
+              isAuthenticated ? (
+                <SnakeGame />
               ) : (
                 <Navigate to="/login" replace />
               )
