@@ -74,21 +74,48 @@ def parse_positions_from_xml(xml_content: str) -> List[Dict[str, Any]]:
     for _, row in df_pos.iterrows():
         try:
             symbol = str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN')))
-            asset_category = str(row.get('assetCategory', 'UNKNOWN'))
             put_call = str(row.get('putCall', '')) if pd.notna(row.get('putCall')) else None
+            # Fix empty string putCall from XML (e.g. putCall="" for stocks)
+            if put_call is not None and put_call.strip() == '':
+                put_call = None
             
             strike_val = None
-            if pd.notna(row.get('strike')):
+            strike_raw = row.get('strike')
+            if pd.notna(strike_raw) and str(strike_raw).strip() != '':
                 try:
-                    strike_val = float(row['strike'])
+                    strike_val = float(strike_raw)
                 except (ValueError, TypeError):
                     pass
+            
+            # Infer asset category: OpenPosition XML often lacks assetCategory
+            # If putCall or strike is present → OPT, otherwise → STK
+            raw_asset_cat = str(row.get('assetCategory', ''))
+            if raw_asset_cat in ('STK', 'OPT'):
+                asset_category = raw_asset_cat
+            elif put_call or strike_val:
+                asset_category = 'OPT'
+            else:
+                asset_category = 'STK'
             
             position_qty = float(row.get('position', 0))
             mark_price = float(row.get('markPrice', 0))
             cost_basis_price = float(row.get('costBasisPrice', 0))
-            fifo_pnl_unrealized = float(row.get('fifoPnlUnrealized', 0))
             multiplier = float(row.get('multiplier', 1))
+            
+            # Calculate unrealized P&L if not provided in the XML
+            fifo_raw = row.get('fifoPnlUnrealized')
+            if pd.notna(fifo_raw) and float(fifo_raw) != 0:
+                fifo_pnl_unrealized = float(fifo_raw)
+            else:
+                # Calculate from cost basis vs mark price
+                if asset_category == 'STK':
+                    fifo_pnl_unrealized = (mark_price - cost_basis_price) * position_qty
+                else:
+                    # Options: position is negative for short, positive for long
+                    # For short options: profit when price goes down
+                    # P&L = (cost_basis - mark) * |qty| * multiplier for shorts
+                    # P&L = (mark - cost_basis) * qty * multiplier for longs
+                    fifo_pnl_unrealized = (mark_price - cost_basis_price) * position_qty * multiplier
             
             positions.append({
                 'symbol': symbol,
