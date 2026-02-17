@@ -47,7 +47,7 @@ function SnakeGame() {
   const snakeRef = useRef([{ x: 18, y: 14 }]);
   const dirRef = useRef({ x: 1, y: 0 });
   const nextDirRef = useRef({ x: 1, y: 0 });
-  const foodRef = useRef({ ...randomFoodPos([{ x: 15, y: 15 }]), stock: randomStock() });
+  const foodRef = useRef({ ...randomFoodPos([{ x: 18, y: 14 }]), stock: randomStock() });
   const scoreRef = useRef(0);
   const speedRef = useRef(INITIAL_SPEED);
   const loopRef = useRef(null);
@@ -60,6 +60,55 @@ function SnakeGame() {
     return parseInt(localStorage.getItem('snakeHighScore') || '0', 10);
   });
   const [collected, setCollected] = useState({});
+
+  // Leaderboard state
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [playerName, setPlayerName] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const API_BASE = '/api';
+
+  // Fetch leaderboard on mount
+  useEffect(() => {
+    fetchLeaderboard();
+  }, []);
+
+  const fetchLeaderboard = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/snake/highscores`);
+      if (resp.ok) {
+        const data = await resp.json();
+        setLeaderboard(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch leaderboard:', e);
+    }
+  };
+
+  const submitHighscore = async () => {
+    if (!playerName.trim() || submitting) return;
+    setSubmitting(true);
+    try {
+      const resp = await fetch(`${API_BASE}/snake/highscore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: playerName.trim(),
+          score: score,
+          collected: collected,
+        }),
+      });
+      if (resp.ok) {
+        setSubmitted(true);
+        fetchLeaderboard();  // Refresh leaderboard
+      }
+    } catch (e) {
+      console.error('Failed to submit highscore:', e);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const draw = useCallback(() => {
     const ctx = canvasRef.current?.getContext('2d');
@@ -183,6 +232,8 @@ function SnakeGame() {
     collectedRef.current = {};
     setScore(0);
     setCollected({});
+    setSubmitted(false);
+    setPlayerName('');
     setGameState('playing');
 
     clearInterval(loopRef.current);
@@ -252,47 +303,90 @@ function SnakeGame() {
         <span>High: <span className="highscore-value">{highScore}</span></span>
       </div>
 
-      <div className="snake-canvas-wrapper">
-        <canvas
-          ref={canvasRef}
-          width={CANVAS_W}
-          height={CANVAS_H}
-        />
+      <div className="snake-main-layout">
+        <div className="snake-canvas-wrapper">
+          <canvas
+            ref={canvasRef}
+            width={CANVAS_W}
+            height={CANVAS_H}
+          />
 
-        {gameState === 'idle' && (
-          <div className="snake-overlay">
-            <h2 style={{ color: '#00ff88' }}>🐍 MAG7 Snake</h2>
-            <p style={{ color: '#888', marginBottom: '1.5rem' }}>
-              Collect the Magnificent 7 stocks!
-            </p>
-            <button className="snake-start-btn" onClick={startGame}>
-              Start Game
-            </button>
-          </div>
-        )}
+          {gameState === 'idle' && (
+            <div className="snake-overlay">
+              <h2 style={{ color: '#00ff88' }}>🐍 MAG7 Snake</h2>
+              <p style={{ color: '#888', marginBottom: '1.5rem' }}>
+                Collect the Magnificent 7 stocks!
+              </p>
+              <button className="snake-start-btn" onClick={startGame}>
+                Start Game
+              </button>
+            </div>
+          )}
 
-        {gameState === 'dead' && (
-          <div className="snake-overlay">
-            <h2>Game Over!</h2>
-            <p className="final-score">Score: {score}</p>
+          {gameState === 'dead' && (
+            <div className="snake-overlay">
+              <h2>Game Over!</h2>
+              <p className="final-score">Score: {score}</p>
 
-            {Object.keys(collected).length > 0 && (
-              <div className="collected-stocks">
-                {Object.entries(collected)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([ticker, count]) => (
-                    <span key={ticker} className="stock-badge">
-                      {ticker}: <span className="count">×{count}</span>
-                    </span>
-                  ))}
-              </div>
-            )}
+              {Object.keys(collected).length > 0 && (
+                <div className="collected-stocks">
+                  {Object.entries(collected)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([ticker, count]) => (
+                      <span key={ticker} className="stock-badge">
+                        {ticker}: <span className="count">×{count}</span>
+                      </span>
+                    ))}
+                </div>
+              )}
 
-            <button className="snake-restart-btn" onClick={startGame}>
-              Play Again
-            </button>
-          </div>
-        )}
+              {!submitted ? (
+                <div className="highscore-form">
+                  <input
+                    type="text"
+                    className="name-input"
+                    placeholder="Your name..."
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    maxLength={20}
+                    onKeyDown={(e) => { if (e.key === 'Enter') submitHighscore(); }}
+                  />
+                  <button
+                    className="snake-restart-btn"
+                    onClick={submitHighscore}
+                    disabled={!playerName.trim() || submitting}
+                    style={{ fontSize: '0.9rem', padding: '0.5rem 1.2rem' }}
+                  >
+                    {submitting ? 'Saving...' : 'Save Score'}
+                  </button>
+                </div>
+              ) : (
+                <p style={{ color: '#00ff88', marginBottom: '1rem' }}>✓ Score saved!</p>
+              )}
+
+              <button className="snake-restart-btn" onClick={startGame}>
+                Play Again
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="snake-leaderboard">
+          <h3>🏆 Leaderboard</h3>
+          {leaderboard.length === 0 ? (
+            <p className="lb-empty">No scores yet. Be the first!</p>
+          ) : (
+            <ol className="lb-list">
+              {leaderboard.map((entry, i) => (
+                <li key={i} className={`lb-entry ${i < 3 ? 'lb-top' : ''}`}>
+                  <span className="lb-rank">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`}</span>
+                  <span className="lb-name">{entry.name}</span>
+                  <span className="lb-score">{entry.score}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
       </div>
 
       <p className="snake-controls-hint">

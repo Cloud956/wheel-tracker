@@ -9,9 +9,11 @@ import time
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_user_config, save_wheels, get_wheels, delete_user_wheels
+from database import get_user_config, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores
 from trade_categorizer import categorize_trades, fetch_and_parse_trades
 from models import Trade, ActionType
+from pydantic import BaseModel
+from typing import Optional, Dict
 from wheel_analyzer import identify_new_wheels, merge_new_wheels, process_wheels
 
 load_dotenv()
@@ -205,3 +207,28 @@ def get_history(user: dict = Depends(verify_token)):
             "comm": format_currency(5.00)
         }
     ]
+
+# ── Snake Highscores ──────────────────────────────────────────────
+
+class HighscoreSubmission(BaseModel):
+    name: str
+    score: int
+    collected: Optional[Dict[str, int]] = {}
+
+@app.post("/snake/highscore")
+def submit_highscore(data: HighscoreSubmission):
+    """Save a snake game highscore. No auth required — it's a fun leaderboard."""
+    if not data.name or len(data.name.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Name is required")
+    if data.score < 0:
+        raise HTTPException(status_code=400, detail="Invalid score")
+    
+    success = save_highscore(data.name.strip(), data.score, data.collected or {})
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save highscore")
+    return {"status": "success"}
+
+@app.get("/snake/highscores")
+def list_highscores():
+    """Get top 10 snake highscores. No auth required."""
+    return get_highscores(limit=10)

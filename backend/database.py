@@ -39,6 +39,7 @@ dynamodb = boto3.resource(**boto3_kwargs)
 # Tables
 USER_TABLE_NAME = os.getenv("DYNAMODB_USER_TABLE_NAME", "UserConfigs")
 WHEEL_TABLE_NAME = os.getenv("DYNAMODB_WHEEL_TABLE_NAME", "Wheels")
+SNAKE_TABLE_NAME = os.getenv("DYNAMODB_SNAKE_TABLE_NAME", "snake_highscores")
 
 def get_user_config(email: str) -> Optional[Dict[str, Any]]:
     """
@@ -241,4 +242,57 @@ def get_wheels(username: str) -> List[Wheel]:
                 
         return wheels
     except ClientError as e:
+        return []
+
+
+# ── Snake Highscores ──────────────────────────────────────────────
+
+def save_highscore(name: str, score: int, collected: dict) -> bool:
+    """Save a snake highscore to DynamoDB."""
+    table = dynamodb.Table(SNAKE_TABLE_NAME)
+    try:
+        # Sort key: zero-padded score (descending) + timestamp for uniqueness
+        # We pad to 10 digits so DynamoDB string sort gives numeric order
+        ts = datetime.utcnow().isoformat()
+        # Use inverted score for descending sort (higher scores first)
+        inverted = 9999999999 - score
+        sk = f"{str(inverted).zfill(10)}#{ts}"
+        
+        item = {
+            'pk': 'GLOBAL',
+            'sk': sk,
+            'name': name[:20],  # Cap name length
+            'score': score,
+            'collected': _convert_for_dynamodb(collected),
+            'timestamp': ts,
+        }
+        table.put_item(Item=item)
+        return True
+    except ClientError as e:
+        print(f"Error saving highscore: {e}")
+        return False
+
+
+def get_highscores(limit: int = 10) -> list:
+    """Retrieve top highscores from DynamoDB, sorted by score descending."""
+    table = dynamodb.Table(SNAKE_TABLE_NAME)
+    try:
+        from boto3.dynamodb.conditions import Key
+        response = table.query(
+            KeyConditionExpression=Key('pk').eq('GLOBAL'),
+            Limit=limit,
+            ScanIndexForward=True,  # ascending on sk, which has inverted score = descending by real score
+        )
+        items = response.get('Items', [])
+        results = []
+        for item in items:
+            results.append({
+                'name': item.get('name', '???'),
+                'score': int(item.get('score', 0)),
+                'collected': item.get('collected', {}),
+                'timestamp': item.get('timestamp', ''),
+            })
+        return results
+    except ClientError as e:
+        print(f"Error fetching highscores: {e}")
         return []

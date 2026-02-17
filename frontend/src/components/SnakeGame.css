@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 2rem;
+  padding: 1.5rem;
   min-height: 100vh;
   background: #0a0a0a;
   color: #e0e0e0;
@@ -14,8 +14,8 @@
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  max-width: 640px;
-  margin-bottom: 1rem;
+  max-width: 1100px;
+  margin-bottom: 0.8rem;
 }
 
 .snake-header h1 {
@@ -44,7 +44,7 @@
 .snake-scoreboard {
   display: flex;
   gap: 2rem;
-  margin-bottom: 1rem;
+  margin-bottom: 0.8rem;
   font-size: 1.1rem;
 }
 
@@ -65,12 +65,20 @@
   font-weight: bold;
 }
 
+/* Side-by-side layout */
+.snake-main-layout {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
 .snake-canvas-wrapper {
   position: relative;
   border: 2px solid #333;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 0 30px rgba(0, 255, 136, 0.1);
+  flex-shrink: 0;
 }
 
 .snake-canvas-wrapper canvas {
@@ -100,7 +108,7 @@
 .snake-overlay .final-score {
   font-size: 1.2rem;
   color: #ccc;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .snake-overlay .collected-stocks {
@@ -108,7 +116,7 @@
   gap: 0.5rem;
   flex-wrap: wrap;
   justify-content: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   max-width: 300px;
 }
 
@@ -124,6 +132,33 @@
 .snake-overlay .collected-stocks .stock-badge .count {
   color: #00ff88;
   font-weight: bold;
+}
+
+/* Highscore name input form */
+.highscore-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  align-items: center;
+}
+
+.name-input {
+  padding: 0.5rem 0.8rem;
+  font-size: 1rem;
+  background: #1a1a2e;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #e0e0e0;
+  outline: none;
+  width: 160px;
+}
+
+.name-input:focus {
+  border-color: #00ff88;
+}
+
+.name-input::placeholder {
+  color: #555;
 }
 
 .snake-start-btn,
@@ -143,6 +178,84 @@
 .snake-restart-btn:hover {
   background: #00cc6a;
   transform: scale(1.05);
+}
+
+.snake-restart-btn:disabled {
+  background: #555;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Leaderboard Panel ── */
+.snake-leaderboard {
+  width: 240px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.snake-leaderboard h3 {
+  color: #ffd700;
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  text-align: center;
+  border-bottom: 1px solid #333;
+  padding-bottom: 0.6rem;
+}
+
+.lb-empty {
+  color: #555;
+  font-size: 0.85rem;
+  text-align: center;
+  font-style: italic;
+}
+
+.lb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.lb-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 4px;
+  background: #1a1a1a;
+  font-size: 0.85rem;
+}
+
+.lb-entry.lb-top {
+  background: #1a1a2e;
+  border: 1px solid #333;
+}
+
+.lb-rank {
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+}
+
+.lb-name {
+  flex: 1;
+  color: #ccc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-score {
+  color: #00ff88;
+  font-weight: bold;
+  font-family: monospace;
+  font-size: 0.95rem;
 }
 
 .snake-controls-hint {
