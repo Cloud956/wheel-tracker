@@ -5,6 +5,7 @@ import Login from './components/logins/login';
 import Home from './components/Home';
 import Dashboard from './components/Dashboard';
 import PnlPage from './components/PnlPage';
+import AnalyticsPage from './components/AnalyticsPage';
 import AccountSettings from './components/AccountSettings';
 import SnakeGame from './components/SnakeGame';
 import './App.css';
@@ -77,6 +78,16 @@ function App() {
             element={
               isAuthenticated ? (
                 <PnlPage onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+          <Route
+            path="/analytics"
+            element={
+              isAuthenticated ? (
+                <AnalyticsPage onLogout={handleLogout} />
               ) : (
                 <Navigate to="/login" replace />
               )

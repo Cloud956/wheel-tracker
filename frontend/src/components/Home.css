@@ -36,7 +36,7 @@
   flex-wrap: wrap;
   justify-content: center;
   width: 100%;
-  max-width: 900px;
+  max-width: 1400px;
 }
 
 .home-card {
@@ -44,7 +44,7 @@
   border: 1px solid #2a2a50;
   border-radius: 16px;
   padding: 40px 36px;
-  width: 340px;
+  width: 300px;
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   display: flex;

@@ -29,6 +29,20 @@ function Home({ onLogout }) {
           <p>Track your daily strategy performance over time with an interactive chart.</p>
           <button className="home-card-btn">Open →</button>
         </div>
+
+        <div className="home-card" onClick={() => navigate('/analytics')}>
+          <div className="home-card-icon">📊</div>
+          <h2>Wheel Analytics</h2>
+          <p>Win rate, average PnL, hold times, monthly performance, symbol breakdown and more.</p>
+          <button className="home-card-btn">Open →</button>
+        </div>
+
+        <div className="home-card" onClick={() => navigate('/snake')}>
+          <div className="home-card-icon">🐍</div>
+          <h2>Snake Game</h2>
+          <p>Take a break and play Snake. Compete for the top spot on the leaderboard.</p>
+          <button className="home-card-btn">Play →</button>
+        </div>
       </div>
     </div>
   );
