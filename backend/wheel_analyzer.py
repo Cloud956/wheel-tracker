@@ -192,6 +192,11 @@ def process_wheels(wheels: List[Wheel], categorized_trades: List[CategorizedTrad
             wheel.is_open = False
             wheel.end_date = c_trade.trade.datetime
             wheel.phase = WheelPhase.CSP.value  # stays CSP, just closed
+            # Clear stale position data — no live position for closed wheels
+            wheel.unrealized_pnl = None
+            wheel.market_price = None
+            wheel.cost_basis = None
+            wheel.holdings = []
             print(f"WHEEL CLOSED (put buyback): {wheel.wheel_id}")
             
         elif c_trade.category == ActionType.ASSIGNMENT_PUT:
@@ -218,6 +223,11 @@ def process_wheels(wheels: List[Wheel], categorized_trades: List[CategorizedTrad
             wheel.is_open = False
             wheel.end_date = c_trade.trade.datetime
             wheel.currentSoldCall = None
+            # Clear stale position data — no live position for closed wheels
+            wheel.unrealized_pnl = None
+            wheel.market_price = None
+            wheel.cost_basis = None
+            wheel.holdings = []
             print(f"WHEEL CLOSED (call assignment): {wheel.wheel_id}")
     
     # 3. Recalculate PnL for ALL wheels

@@ -160,7 +160,8 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
     for idx, w in enumerate(wheels_data):
         total_comm = w.total_commissions
         premium = w.premium_collected
-        unrealized = w.unrealized_pnl or 0.0
+        # Only include unrealized PnL for open wheels — closed wheels have no live position
+        unrealized = (w.unrealized_pnl or 0.0) if w.is_open else 0.0
         # Current PnL = Premium + Unrealized + Commissions (comms are negative from IBKR)
         current_pnl = premium + unrealized + total_comm
         
