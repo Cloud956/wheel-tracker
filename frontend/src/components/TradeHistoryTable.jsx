@@ -27,6 +27,11 @@ const TradeHistoryTable = ({ data }) => {
         cell: ({ getValue }) => <strong>{getValue()}</strong>,
       },
       {
+        accessorKey: 'action',
+        header: 'Action',
+        enableSorting: true,
+      },
+      {
         accessorKey: 'details',
         header: 'Details',
         enableSorting: false,

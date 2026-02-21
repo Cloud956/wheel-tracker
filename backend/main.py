@@ -213,33 +213,40 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
 
 @app.get("/history")
 def get_history(user: dict = Depends(verify_token)):
-    # Fake history data
-    return [
-        {
-            "date": "2023-12-01",
-            "symbol": "FAKE",
-            "details": "150.0 P OPT",
-            "qty": -1,
-            "price": "$1.20",
-            "comm": format_currency(1.25)
-        },
-        {
-            "date": "2023-11-15",
-            "symbol": "TEST",
-            "details": "100.0 C OPT",
-            "qty": 1,
-            "price": "$0.50",
-            "comm": format_currency(1.25)
-        },
-        {
-            "date": "2023-10-01",
-            "symbol": "DEMO",
-            "details": "25.0 P OPT",
-            "qty": -10,
-            "price": "$0.45",
-            "comm": format_currency(5.00)
-        }
-    ]
+    email = user.get('email')
+    wheels = get_wheels(email)
+    
+    # Flatten all trades from all wheels into a single list, deduped by trade_id
+    seen_ids = set()
+    history = []
+    
+    for w in wheels:
+        for t in w.trades:
+            if t.trade.trade_id in seen_ids:
+                continue
+            seen_ids.add(t.trade.trade_id)
+            
+            # Build a readable details string: "STRIKE PUT/CALL OPT" or "STK"
+            if t.trade.asset_category == 'OPT':
+                pc = 'Put' if t.trade.put_call == 'P' else 'Call' if t.trade.put_call == 'C' else ''
+                strike_str = f"{t.trade.strike} " if t.trade.strike else ''
+                details = f"{strike_str}{pc} OPT"
+            else:
+                details = t.trade.description or 'STK'
+            
+            history.append({
+                "date": t.trade.datetime.isoformat().split('T')[0],
+                "symbol": t.trade.symbol,
+                "action": t.category.value,
+                "details": details,
+                "qty": t.trade.quantity,
+                "price": format_currency(t.trade.trade_price),
+                "comm": format_currency(t.trade.ib_commission),
+            })
+    
+    # Sort by date descending
+    history.sort(key=lambda x: x['date'], reverse=True)
+    return history
 
 # ── Snake Highscores ──────────────────────────────────────────────
 
