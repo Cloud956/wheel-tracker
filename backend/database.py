@@ -40,6 +40,7 @@ dynamodb = boto3.resource(**boto3_kwargs)
 USER_TABLE_NAME = os.getenv("DYNAMODB_USER_TABLE_NAME", "UserConfigs")
 WHEEL_TABLE_NAME = os.getenv("DYNAMODB_WHEEL_TABLE_NAME", "Wheels")
 SNAKE_TABLE_NAME = os.getenv("DYNAMODB_SNAKE_TABLE_NAME", "snake_highscores")
+DAILY_PNL_TABLE_NAME = os.getenv("DYNAMODB_DAILY_PNL_TABLE_NAME", "daily_pnl")
 
 def get_user_config(email: str) -> Optional[Dict[str, Any]]:
     """
@@ -287,6 +288,63 @@ def get_wheels(username: str) -> List[Wheel]:
     except ClientError as e:
         print(f"ERROR querying wheels for {username}: {e}")
         return []
+
+
+# ── Daily PnL ────────────────────────────────────────────────────
+
+def get_daily_pnl(username: str) -> List[Dict[str, Any]]:
+    """
+    Retrieve all daily PnL records for a user, sorted by date ascending.
+    Each item has: date (str, YYYY-MM-DD), daily_pnl (float), cumulative_pnl (float).
+    """
+    table = dynamodb.Table(DAILY_PNL_TABLE_NAME)
+    try:
+        from boto3.dynamodb.conditions import Key
+        items = []
+        response = table.query(
+            KeyConditionExpression=Key('username').eq(username)
+        )
+        items.extend(response.get('Items', []))
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response.get('Items', []))
+
+        # Convert Decimals and sort by date
+        result = []
+        for item in items:
+            item = _convert_from_dynamodb(item)
+            result.append({
+                'date': item['date'],
+                'daily_pnl': float(item.get('daily_pnl', 0)),
+                'cumulative_pnl': float(item.get('cumulative_pnl', 0)),
+            })
+        result.sort(key=lambda x: x['date'])
+        return result
+    except ClientError as e:
+        print(f"ERROR querying daily_pnl for {username}: {e}")
+        return []
+
+
+def save_daily_pnl(username: str, date: str, daily_pnl: float, cumulative_pnl: float) -> bool:
+    """
+    Upsert a single daily PnL record.
+    PK: username, SK: date (YYYY-MM-DD).
+    """
+    table = dynamodb.Table(DAILY_PNL_TABLE_NAME)
+    try:
+        table.put_item(Item={
+            'username': username,
+            'date': date,
+            'daily_pnl': Decimal(str(daily_pnl)),
+            'cumulative_pnl': Decimal(str(cumulative_pnl)),
+        })
+        return True
+    except ClientError as e:
+        print(f"ERROR saving daily_pnl for {username} on {date}: {e}")
+        return False
 
 
 # ── Snake Highscores ──────────────────────────────────────────────

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Cookies from 'js-cookie';
 import Login from './components/logins/login';
+import Home from './components/Home';
 import Dashboard from './components/Dashboard';
+import PnlPage from './components/PnlPage';
 import AccountSettings from './components/AccountSettings';
 import SnakeGame from './components/SnakeGame';
 import './App.css';
@@ -46,9 +48,19 @@ function App() {
                     </div>
                 </div>
               ) : (
-                <Navigate to="/dashboard" replace />
+                <Navigate to="/" replace />
               )
             } 
+          />
+          <Route
+            path="/"
+            element={
+              isAuthenticated ? (
+                <Home onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
           />
           <Route 
             path="/dashboard" 
@@ -59,6 +71,16 @@ function App() {
                 <Navigate to="/login" replace />
               )
             } 
+          />
+          <Route
+            path="/pnl"
+            element={
+              isAuthenticated ? (
+                <PnlPage onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
           />
           <Route 
             path="/settings" 
@@ -80,7 +102,7 @@ function App() {
               )
             } 
           />
-          <Route path="*" element={<Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />} />
+          <Route path="*" element={<Navigate to={isAuthenticated ? "/" : "/login"} replace />} />
         </Routes>
       </div>
     </Router>

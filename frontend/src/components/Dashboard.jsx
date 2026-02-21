@@ -137,7 +137,10 @@ function Dashboard({ onLogout }) {
   return (
     <div className="dashboard">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1>Wheel Strategy Tracker version 1.0</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <button className="btn btn-settings" onClick={() => navigate('/')}>← Home</button>
+              <h1 style={{ margin: 0 }}>Wheels Overview</h1>
+          </div>
           <div style={{ display: 'flex', gap: '10px' }}>
               <button className="btn" onClick={handleSync} disabled={syncing}>
                 {syncing ? 'Syncing...' : 'Sync IBKR'}

@@ -9,7 +9,7 @@ import time
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_user_config, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores
+from database import get_user_config, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores, get_daily_pnl
 from trade_categorizer import categorize_trades, fetch_flex_report, parse_trades_from_xml, parse_positions_from_xml
 from models import Trade, ActionType
 from pydantic import BaseModel
@@ -145,6 +145,37 @@ def clear_data(user: dict = Depends(verify_token)):
     email = user.get('email')
     count = delete_user_wheels(email)
     return {"status": "success", "message": f"Deleted {count} wheels for user {email}"}
+
+
+@app.get("/pnl")
+def get_pnl(user: dict = Depends(verify_token)):
+    """Return all daily PnL records for the user, sorted by date ascending."""
+    email = user.get('email')
+    records = get_daily_pnl(email)
+    return records
+
+
+@app.post("/activate-daily-mode")
+def activate_daily_mode(user: dict = Depends(verify_token)):
+    """
+    Activates daily mode:
+    - Purges all stored wheel data for the user.
+    - Sets the daily_mode flag in the user config.
+    The actual 3 AM CET sync schedule is handled separately at the infrastructure level.
+    """
+    email = user.get('email')
+
+    # 1. Purge all wheel data
+    deleted = delete_user_wheels(email)
+
+    # 2. Mark daily_mode active in user config
+    from database import update_user_config
+    update_user_config(email, {'daily_mode': True})
+
+    return {
+        "status": "success",
+        "message": f"Daily mode activated. {deleted} wheels purged.",
+    }
 
 @app.get("/wheel-summary")
 def get_wheel_summary(user: dict = Depends(verify_token)):
