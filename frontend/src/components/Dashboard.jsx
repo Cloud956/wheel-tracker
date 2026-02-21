@@ -97,6 +97,35 @@ function Dashboard({ onLogout }) {
     }
   };
 
+  const handlePurge = async () => {
+    const confirmed = window.confirm(
+      '⚠️ Are you sure you want to purge ALL wheel data?\n\nThis will permanently delete every wheel and cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    try {
+      const token = Cookies.get("token");
+      if (!token) throw new Error("No authentication token found");
+
+      const response = await fetch(`${API_BASE}/clear-data`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.status === 401) { onLogout(); return; }
+
+      const data = await response.json();
+      if (!response.ok) {
+        alert("Purge Failed: " + (data.detail || "Unknown error"));
+      } else {
+        alert(`✅ ${data.message}`);
+        setSyncResults(null);
+        await fetchAllData();
+      }
+    } catch (e) {
+      alert("Purge Error: " + e.message);
+    }
+  };
+
   if (loading) {
     return <div className="loading">Loading data...</div>;
   }
@@ -112,6 +141,9 @@ function Dashboard({ onLogout }) {
           <div style={{ display: 'flex', gap: '10px' }}>
               <button className="btn" onClick={handleSync} disabled={syncing}>
                 {syncing ? 'Syncing...' : 'Sync IBKR'}
+              </button>
+              <button className="btn" style={{background: '#ff4444', color: '#fff', fontWeight: 'bold'}} onClick={handlePurge}>
+                🗑️ Purge Data
               </button>
               <button className="btn btn-settings" onClick={() => navigate('/settings')}>Settings</button>
               <button className="btn" style={{background: '#00ff88', color: '#000', fontWeight: 'bold'}} onClick={() => navigate('/snake')}>🐍 Snake</button>
