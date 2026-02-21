@@ -149,7 +149,6 @@ function Dashboard({ onLogout }) {
                 🗑️ Purge Data
               </button>
               <button className="btn btn-settings" onClick={() => navigate('/settings')}>Settings</button>
-              <button className="btn" style={{background: '#00ff88', color: '#000', fontWeight: 'bold'}} onClick={() => navigate('/snake')}>🐍 Snake</button>
               <Logout onLogout={onLogout} />
           </div>
       </div>

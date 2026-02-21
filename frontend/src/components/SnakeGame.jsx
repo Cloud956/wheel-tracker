@@ -297,8 +297,8 @@ function SnakeGame() {
     <div className="snake-page">
       <div className="snake-header">
         <h1>🐍 MAG7 Snake</h1>
-        <button className="back-btn" onClick={() => navigate('/dashboard')}>
-          ← Back to Dashboard
+        <button className="back-btn" onClick={() => navigate('/')}>
+          ← Back to Menu
         </button>
       </div>
 
