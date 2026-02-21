@@ -58,34 +58,41 @@ def sync_data(user: dict = Depends(verify_token)):
         positions_list = parse_positions_from_xml(xml_content)
         
         if not trades_list:
-             return {"status": "success", "message": "No trades found in Flex Report", "categorized_trades": []}
-
-        # Clear existing wheels before full re-sync
-        delete_user_wheels(email)
+             return {"status": "success", "message": "No trades found in Flex Report", "new_trades": 0, "count": 0, "categorized_trades": []}
 
         # 3. Categorize Data
         categorized = categorize_trades(trades_list)
         
-        # 4. Identify New Wheels
-        # Since we cleared everything, all identified wheels are treated as new
-        new_wheels = identify_new_wheels(categorized, email)
+        # 4. Load existing wheels and identify genuinely new trades
+        existing_wheels = get_wheels(email)
+        existing_trade_ids = set()
+        for w in existing_wheels:
+            for t in w.trades:
+                existing_trade_ids.add(t.trade.trade_id)
         
-        # 5. Merge New Wheels with Existing (Existing is empty now)
-        wheels = new_wheels # merge_new_wheels(new_wheels, []) 
+        new_trade_ids = {c.trade.trade_id for c in categorized} - existing_trade_ids
+        new_trade_count = len(new_trade_ids)
+        print(f"Found {len(categorized)} total trades, {new_trade_count} are new")
         
-        # 6. Update Wheels with other trades (Assignment, Covered Call, Close, etc.)
-        wheels = process_wheels(wheels, categorized)
+        # 5. Process based on whether there are new trades
+        if new_trade_ids:
+            # New trades found — full reprocess with merge
+            new_wheels = identify_new_wheels(categorized, email)
+            wheels = merge_new_wheels(new_wheels, existing_wheels)
+            wheels = process_wheels(wheels, categorized)
+            wheels = enrich_wheels_with_positions(wheels, positions_list)
+            
+            wheels_data = [w.dict() for w in wheels]
+            save_wheels(email, wheels_data)
+            print(f"Saved {len(wheels)} wheels ({new_trade_count} new trades processed)")
+        else:
+            # No new trades — just refresh position/market data on existing wheels
+            wheels = enrich_wheels_with_positions(existing_wheels, positions_list)
+            wheels_data = [w.dict() for w in wheels]
+            save_wheels(email, wheels_data)
+            print("No new trades — refreshed position data only")
         
-        # 7. Enrich open wheels with current position / market value data
-        wheels = enrich_wheels_with_positions(wheels, positions_list)
-        
-        # 8. Save Wheels to DynamoDB
-        # We convert the Pydantic models to dicts for saving
-        # The database module handles type conversion (datetime->str, float->Decimal)
-        wheels_data = [w.dict() for w in wheels]
-        save_wheels(email, wheels_data)
-        
-        # 4. Return Results
+        # 6. Return Results
         results = []
         
         # Helper to find trade by ID
@@ -122,6 +129,7 @@ def sync_data(user: dict = Depends(verify_token)):
             
         return {
             "status": "success", 
+            "new_trades": new_trade_count,
             "count": len(results),
             "categorized_trades": results
         }
@@ -129,7 +137,7 @@ def sync_data(user: dict = Depends(verify_token)):
     except Exception as e:
         print(f"Processing Error: {e}")
         if "Document is empty" in str(e):
-             return {"status": "success", "message": "Parsed empty document (No trades or empty XML)", "categorized_trades": []}
+             return {"status": "success", "message": "Parsed empty document (No trades or empty XML)", "new_trades": 0, "count": 0, "categorized_trades": []}
         raise HTTPException(status_code=500, detail=f"Error processing Flex data: {str(e)}")
 
 @app.get("/clear-data")

@@ -111,6 +111,20 @@ def _convert_for_dynamodb(obj: Any) -> Any:
         return {k: _convert_for_dynamodb(v) for k, v in obj.items() if v is not None}
     return obj
 
+def _convert_from_dynamodb(obj: Any) -> Any:
+    """
+    Recursively converts DynamoDB types back to Python native types:
+    - Decimal -> float
+    - Leaves other types (str, bool, list, dict, None) unchanged.
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, list):
+        return [_convert_from_dynamodb(i) for i in obj]
+    if isinstance(obj, dict):
+        return {k: _convert_from_dynamodb(v) for k, v in obj.items()}
+    return obj
+
 def save_wheels(username: str, wheels: List[Dict[str, Any]]) -> int:
     """
     Save a list of wheels to DynamoDB.
@@ -191,18 +205,32 @@ def delete_user_wheels(username: str) -> int:
 def get_wheels(username: str) -> List[Wheel]:
     """
     Retrieve all wheels for a user as Wheel objects.
+    Handles pagination and converts DynamoDB types (Decimal→float).
     """
     table = dynamodb.Table(WHEEL_TABLE_NAME)
     try:
         from boto3.dynamodb.conditions import Key
+
+        # Paginated query to retrieve ALL wheel items
+        items = []
         response = table.query(
             KeyConditionExpression=Key('username').eq(username)
         )
-        items = response.get('Items', [])
+        items.extend(response.get('Items', []))
+
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response.get('Items', []))
         
         wheels = []
         for item in items:
             try:
+                # Convert DynamoDB Decimal types to Python float
+                item = _convert_from_dynamodb(item)
+
                 # Handle string dates if coming from DB
                 start_dt = item['start_date']
                 if isinstance(start_dt, str):
@@ -250,10 +278,14 @@ def get_wheels(username: str) -> List[Wheel]:
                 )
                 wheels.append(wheel)
             except Exception as e:
+                import traceback
+                print(f"ERROR deserializing wheel '{item.get('wheel_id', 'UNKNOWN')}': {e}")
+                traceback.print_exc()
                 continue
                 
         return wheels
     except ClientError as e:
+        print(f"ERROR querying wheels for {username}: {e}")
         return []
 
 

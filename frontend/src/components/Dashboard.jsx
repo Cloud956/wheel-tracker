@@ -87,6 +87,8 @@ function Dashboard({ onLogout }) {
         alert("Sync Failed: " + (data.detail || "Unknown error"));
       } else {
         setSyncResults(data);
+        // Refresh wheel summary and trade history after successful sync
+        await fetchAllData();
       }
     } catch (e) {
       alert("Sync Error: " + e.message);
@@ -121,7 +123,10 @@ function Dashboard({ onLogout }) {
         <div style={{ padding: '20px', background: '#f5f5f5', margin: '20px 0', border: '1px solid #ddd', color: '#333' }}>
           <h3 style={{color: '#333'}}>Sync Results (Categorization Test)</h3>
           <p style={{color: '#333'}}>Status: {syncResults.status}</p>
-          <p style={{color: '#333'}}>Count: {syncResults.count}</p>
+          <p style={{color: '#333'}}>Total Trades: {syncResults.count}</p>
+          <p style={{color: syncResults.new_trades > 0 ? '#155724' : '#666', fontWeight: 'bold'}}>
+            New Trades: {syncResults.new_trades ?? '—'}{syncResults.new_trades === 0 ? ' (no update needed)' : ''}
+          </p>
           {syncResults.categorized_trades && syncResults.categorized_trades.length > 0 ? (
             <table className="summary-table" style={{ width: '100%', fontSize: '0.9em', color: '#111' }}>
               <thead>
@@ -157,7 +162,7 @@ function Dashboard({ onLogout }) {
               </tbody>
             </table>
           ) : (
-            <p style={{color: '#333'}}>No new trades found to categorize.</p>
+            <p style={{color: '#333'}}>{syncResults.message || 'No new trades found to categorize.'}</p>
           )}
           <button onClick={() => setSyncResults(null)} style={{marginTop: '10px'}}>Close Results</button>
         </div>
