@@ -40,7 +40,9 @@ dynamodb = boto3.resource(**boto3_kwargs)
 USER_TABLE_NAME = os.getenv("DYNAMODB_USER_TABLE_NAME", "UserConfigs")
 WHEEL_TABLE_NAME = os.getenv("DYNAMODB_WHEEL_TABLE_NAME", "Wheels")
 SNAKE_TABLE_NAME = os.getenv("DYNAMODB_SNAKE_TABLE_NAME", "snake_highscores")
-DAILY_PNL_TABLE_NAME = os.getenv("DYNAMODB_DAILY_PNL_TABLE_NAME", "daily_pnl")
+DAILY_PNL_TABLE_NAME        = os.getenv("DYNAMODB_DAILY_PNL_TABLE_NAME",         "daily_pnl")
+PMCC_SHORT_CALLS_TABLE      = os.getenv("DYNAMODB_PMCC_SHORT_CALLS_TABLE",    "pmcc_short_calls")
+PMCC_LEAP_SNAPSHOTS_TABLE   = os.getenv("DYNAMODB_PMCC_LEAP_SNAPSHOTS_TABLE", "pmcc_leap_snapshots")
 
 def get_user_config(email: str) -> Optional[Dict[str, Any]]:
     """
@@ -345,6 +347,85 @@ def save_daily_pnl(username: str, date: str, daily_pnl: float, cumulative_pnl: f
     except ClientError as e:
         print(f"ERROR saving daily_pnl for {username} on {date}: {e}")
         return False
+
+
+# ── PMCC / Futuristic Wheel ──────────────────────────────────────────────
+
+def save_pmcc_short_calls(username: str, calls: List[Dict[str, Any]]) -> int:
+    """
+    Upsert all PMCC short call records.
+    PK: username  |  SK: call_id
+    """
+    table = dynamodb.Table(PMCC_SHORT_CALLS_TABLE)
+    count = 0
+    with table.batch_writer() as batch:
+        for call in calls:
+            clean = _convert_for_dynamodb(call)
+            item  = {'username': username, 'call_id': clean.get('call_id', ''), **clean}
+            batch.put_item(Item=item)
+            count += 1
+    return count
+
+
+def get_pmcc_short_calls(username: str) -> List[Dict[str, Any]]:
+    """Get all PMCC short call records for a user."""
+    table = dynamodb.Table(PMCC_SHORT_CALLS_TABLE)
+    try:
+        from boto3.dynamodb.conditions import Key
+        items = []
+        response = table.query(KeyConditionExpression=Key('username').eq(username))
+        items.extend(response.get('Items', []))
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey'],
+            )
+            items.extend(response.get('Items', []))
+        return [_convert_from_dynamodb(item) for item in items]
+    except ClientError as e:
+        print(f"ERROR fetching pmcc_short_calls for {username}: {e}")
+        return []
+
+
+def save_pmcc_leap_snapshot(username: str, snapshot_date: str, leaps: List[Dict[str, Any]]) -> int:
+    """
+    Save daily LEAP position snapshots.
+    PK: username  |  SK: date#symbol  (e.g. "2026-02-27#GOOGL")
+    Re-syncing on the same date simply overwrites.
+    """
+    table = dynamodb.Table(PMCC_LEAP_SNAPSHOTS_TABLE)
+    count = 0
+    with table.batch_writer() as batch:
+        for leap in leaps:
+            symbol = leap.get('symbol', 'UNKNOWN')
+            sk     = f"{snapshot_date}#{symbol}"
+            clean  = _convert_for_dynamodb(leap)
+            item   = {'username': username, 'sk': sk, 'snapshot_date': snapshot_date, **clean}
+            batch.put_item(Item=item)
+            count += 1
+    return count
+
+
+def get_pmcc_leap_snapshots(username: str) -> List[Dict[str, Any]]:
+    """Get all LEAP snapshots for a user, sorted ascending by SK (date#symbol)."""
+    table = dynamodb.Table(PMCC_LEAP_SNAPSHOTS_TABLE)
+    try:
+        from boto3.dynamodb.conditions import Key
+        items = []
+        response = table.query(KeyConditionExpression=Key('username').eq(username))
+        items.extend(response.get('Items', []))
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey'],
+            )
+            items.extend(response.get('Items', []))
+        result = [_convert_from_dynamodb(item) for item in items]
+        result.sort(key=lambda x: x.get('sk', ''))
+        return result
+    except ClientError as e:
+        print(f"ERROR fetching pmcc_leap_snapshots for {username}: {e}")
+        return []
 
 
 # ── Snake Highscores ──────────────────────────────────────────────

@@ -43,6 +43,13 @@ function Home({ onLogout }) {
           <p>Take a break and play Snake. Compete for the top spot on the leaderboard.</p>
           <button className="home-card-btn">Play →</button>
         </div>
+
+        <div className="home-card" onClick={() => navigate('/futuristic-wheel')}>
+          <div className="home-card-icon">⚡</div>
+          <h2>Futuristic Wheel</h2>
+          <p>Track your LEAP positions and short calls (PMCC). Monitor delta, cost basis, and premium collected over time.</p>
+          <button className="home-card-btn">Open →</button>
+        </div>
       </div>
     </div>
   );

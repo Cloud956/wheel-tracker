@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
 from auth import verify_token, format_currency
-from routers import account
+from routers import account, futuristic_wheel
 import requests
 import time
 import pandas as pd
@@ -29,6 +29,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(account.router)
+app.include_router(futuristic_wheel.router)
 
 @app.get("/health")
 def health_check():

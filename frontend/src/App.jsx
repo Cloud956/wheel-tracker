@@ -8,6 +8,7 @@ import PnlPage from './components/PnlPage';
 import AnalyticsPage from './components/AnalyticsPage';
 import AccountSettings from './components/AccountSettings';
 import SnakeGame from './components/SnakeGame';
+import FuturisticWheel from './components/FuturisticWheel';
 import './App.css';
 
 function App() {
@@ -112,6 +113,16 @@ function App() {
                 <Navigate to="/login" replace />
               )
             } 
+          />
+          <Route
+            path="/futuristic-wheel"
+            element={
+              isAuthenticated ? (
+                <FuturisticWheel onLogout={handleLogout} />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
           />
           <Route path="*" element={<Navigate to={isAuthenticated ? "/" : "/login"} replace />} />
         </Routes>

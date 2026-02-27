@@ -117,6 +117,14 @@ def parse_positions_from_xml(xml_content: str) -> List[Dict[str, Any]]:
                     # P&L = (mark - cost_basis) * qty * multiplier for longs
                     fifo_pnl_unrealized = (mark_price - cost_basis_price) * position_qty * multiplier
             
+            # Extract expiry for options (used by PMCC / Futuristic Wheel module)
+            expiry_val = None
+            expiry_raw = row.get('expiry') or row.get('lastTradingDayOrContractMonth')
+            if expiry_raw is not None and pd.notna(expiry_raw):
+                exp_str = str(expiry_raw).strip()
+                if exp_str and exp_str.lower() != 'nan':
+                    expiry_val = exp_str
+
             positions.append({
                 'symbol': symbol,
                 'asset_category': asset_category,
@@ -127,6 +135,7 @@ def parse_positions_from_xml(xml_content: str) -> List[Dict[str, Any]]:
                 'cost_basis_price': cost_basis_price,
                 'fifo_pnl_unrealized': fifo_pnl_unrealized,
                 'multiplier': multiplier,
+                'expiry': expiry_val,
             })
         except Exception as e:
             print(f"Error parsing position row: {e}")
