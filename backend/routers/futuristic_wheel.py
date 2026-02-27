@@ -164,43 +164,50 @@ def sync_futuristic_wheel(user: dict = Depends(verify_token)):
             detail="IBKR token and query_id must be configured in Account Settings"
         )
 
-    # Fetch and parse flex report
-    xml_content  = fetch_flex_report(ibkr_token, ibkr_query_id)
-    trades       = parse_trades_from_xml(xml_content)
-    positions    = parse_positions_from_xml(xml_content)
+    try:
+        # Fetch and parse flex report
+        xml_content  = fetch_flex_report(ibkr_token, ibkr_query_id)
+        trades       = parse_trades_from_xml(xml_content)
+        positions    = parse_positions_from_xml(xml_content)
 
-    # Identify LEAP (long call) positions
-    leap_positions = parse_leap_positions(positions)
+        # Identify LEAP (long call) positions
+        leap_positions = parse_leap_positions(positions)
 
-    if not leap_positions:
+        if not leap_positions:
+            return {
+                'status':          'success',
+                'message':         'No long call (LEAP) positions found in the flex report.',
+                'leaps_found':     0,
+                'calls_processed': 0,
+            }
+
+        leap_symbols = {lp['symbol'] for lp in leap_positions}
+
+        # Save daily LEAP snapshot (upserts — re-syncing same day just overwrites)
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        save_pmcc_leap_snapshot(email, today, leap_positions)
+
+        # Build and save short call history
+        short_calls  = build_pmcc_short_calls(trades, leap_symbols)
+        calls_saved  = save_pmcc_short_calls(email, short_calls) if short_calls else 0
+
         return {
             'status':          'success',
-            'message':         'No long call (LEAP) positions found in the flex report.',
-            'leaps_found':     0,
-            'calls_processed': 0,
+            'leaps_found':     len(leap_positions),
+            'leap_symbols':    sorted(leap_symbols),
+            'snapshot_date':   today,
+            'calls_processed': len(short_calls),
+            'calls_saved':     calls_saved,
+            'open_calls':      sum(1 for c in short_calls if c['status'] == 'open'),
+            'closed_calls':    sum(1 for c in short_calls if c['status'] == 'closed'),
+            'expired_calls':   sum(1 for c in short_calls if c['status'] == 'expired'),
         }
-
-    leap_symbols = {lp['symbol'] for lp in leap_positions}
-
-    # Save daily LEAP snapshot (upserts — re-syncing same day just overwrites)
-    today = datetime.utcnow().strftime('%Y-%m-%d')
-    save_pmcc_leap_snapshot(email, today, leap_positions)
-
-    # Build and save short call history
-    short_calls  = build_pmcc_short_calls(trades, leap_symbols)
-    calls_saved  = save_pmcc_short_calls(email, short_calls) if short_calls else 0
-
-    return {
-        'status':        'success',
-        'leaps_found':   len(leap_positions),
-        'leap_symbols':  sorted(leap_symbols),
-        'snapshot_date': today,
-        'calls_processed': len(short_calls),
-        'calls_saved':   calls_saved,
-        'open_calls':    sum(1 for c in short_calls if c['status'] == 'open'),
-        'closed_calls':  sum(1 for c in short_calls if c['status'] == 'closed'),
-        'expired_calls': sum(1 for c in short_calls if c['status'] == 'expired'),
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
 @router.put("/delta")

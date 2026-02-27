@@ -98,12 +98,12 @@ def update_user_config(email: str, config: Dict[str, Any]) -> bool:
 def _convert_for_dynamodb(obj: Any) -> Any:
     """
     Recursively converts types for DynamoDB compatibility:
-    - float -> Decimal
+    - float -> Decimal (NaN/Inf clamped to 0)
     - datetime -> ISO string
     - Enum -> value (string/int)
     """
     if isinstance(obj, float):
-        return Decimal(str(obj))
+        return _safe_decimal(obj)
     if isinstance(obj, datetime):
         return obj.isoformat()
     if isinstance(obj, Enum):
@@ -350,6 +350,17 @@ def save_daily_pnl(username: str, date: str, daily_pnl: float, cumulative_pnl: f
 
 
 # ── PMCC / Futuristic Wheel ──────────────────────────────────────────────
+
+def _safe_decimal(val) -> Decimal:
+    """Convert a float to Decimal, replacing NaN/Inf with 0 to avoid DynamoDB validation errors."""
+    try:
+        d = Decimal(str(val))
+        if not d.is_finite():
+            return Decimal('0')
+        return d
+    except Exception:
+        return Decimal('0')
+
 
 def save_pmcc_short_calls(username: str, calls: List[Dict[str, Any]]) -> int:
     """
