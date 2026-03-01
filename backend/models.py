@@ -28,6 +28,7 @@ class Trade(BaseModel):
     ib_commission: float = 0.0
     datetime: datetime
     description: Optional[str] = ""
+    expiry: Optional[str] = None   # YYYYMMDD string, populated from IBKR XML
 
 class CategorizedTrade(BaseModel):
     trade: Trade

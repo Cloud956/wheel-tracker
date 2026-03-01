@@ -224,12 +224,14 @@ def parse_trades_from_xml(xml_content: str) -> List[Trade]:
             except (ValueError, TypeError):
                 pass # Keep None if parse fails
 
-        # Filter out LEAPS: skip options with expiry more than 1 year from now
+        # Extract expiry and filter LEAPS for OPT trades
+        trade_expiry = None
         if asset_cat == 'OPT':
             expiry_raw = row.get('expiry') or row.get('lastTradingDayOrContractMonth')
             if expiry_raw is not None and pd.notna(expiry_raw):
                 exp_str = str(expiry_raw).strip()
                 if exp_str and exp_str.lower() != 'nan':
+                    trade_expiry = exp_str[:8]  # Store as YYYYMMDD
                     try:
                         exp_date = datetime.strptime(exp_str[:8], "%Y%m%d")
                         if (exp_date - datetime.now()).days > 365:
@@ -239,7 +241,7 @@ def parse_trades_from_xml(xml_content: str) -> List[Trade]:
                         pass  # If we can't parse the expiry, don't filter it out
 
         trade = Trade(
-            trade_id=unique_id, 
+            trade_id=unique_id,
             ib_exec_id=ib_exec_id,
             symbol=str(row.get('underlyingSymbol', row.get('symbol', 'UNKNOWN'))),
             asset_category=asset_cat,
@@ -249,7 +251,8 @@ def parse_trades_from_xml(xml_content: str) -> List[Trade]:
             trade_price=float(row.get('tradePrice', 0)),
             ib_commission=float(row.get('ibCommission', 0)),
             datetime=dt,
-            description=str(row.get('description', ''))
+            description=str(row.get('description', '')),
+            expiry=trade_expiry,
         )
         trades_list.append(trade)
 
