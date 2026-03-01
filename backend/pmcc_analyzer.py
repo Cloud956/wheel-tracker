@@ -12,7 +12,21 @@ import re
 from models import Trade
 
 
+# Only track short calls opened on or after this date
+START_DATE = date(2026, 2, 20)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _to_date(val: Optional[str]) -> Optional[date]:
+    """Convert a YYYYMMDD[...] string to a date, ignoring trailing chars/decimals."""
+    if not val:
+        return None
+    try:
+        return datetime.strptime(str(val)[:8], "%Y%m%d").date()
+    except (ValueError, TypeError):
+        return None
+
 
 def parse_expiry_from_description(description: str) -> Optional[date]:
     """
@@ -135,7 +149,8 @@ def build_pmcc_short_calls(trades: List[Trade], leap_symbols: Set[str]) -> List[
     def fill_key(item: Dict) -> tuple:
         t         = item['trade']
         exp_id    = item['expiry'].strftime('%Y%m%d') if item['expiry'] else 'NOEXP'
-        strike_id = str(int(t.strike)) if t.strike else 'NOSTRIKE'
+        # Use the raw strike float as string (e.g. "317.5" not "317")
+        strike_id = str(t.strike) if t.strike is not None else 'NOSTRIKE'
         return (t.symbol, strike_id, exp_id, t.datetime.date().isoformat())
 
     opens_by_key:  Dict[tuple, List] = defaultdict(list)
@@ -182,8 +197,7 @@ def build_pmcc_short_calls(trades: List[Trade], leap_symbols: Set[str]) -> List[
         open_commission  = open_mg['total_comm']
 
         # Stable call_id based on group key (not per-fill trade_id)
-        call_id    = f"{sym}_{expiry_id}_{strike_id}_{open_date_str.replace('-', '')}"
-        expiry_str = open_expiry.strftime('%Y-%m-%d') if open_expiry else None
+        call_id    = f"{sym}_{expiry_id}_{strike_id}_{open_date_str.replace('-', '')}"        expiry_str = open_expiry.strftime('%Y-%m-%d') if open_expiry else None
 
         # Find earliest close matching symbol+strike, strictly after open date.
         # Expiry must match when BOTH sides have it; if either is NOEXP, match on symbol+strike alone.
