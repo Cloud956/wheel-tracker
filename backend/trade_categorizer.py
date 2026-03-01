@@ -124,16 +124,12 @@ def parse_positions_from_xml(xml_content: str) -> List[Dict[str, Any]]:
                 exp_str = str(expiry_raw).strip()
                 if exp_str and exp_str.lower() != 'nan':
                     expiry_val = exp_str
-
-            # Filter out LEAPS positions: skip options expiring more than 1 year from now
-            if asset_category == 'OPT' and expiry_val:
-                try:
-                    exp_date = datetime.strptime(expiry_val[:8], "%Y%m%d")
-                    if (exp_date - datetime.now()).days > 365:
-                        print(f"SKIPPING LEAP position: {symbol} expiry={expiry_val}")
-                        continue
-                except (ValueError, TypeError):
-                    pass
+            # NOTE: Do NOT filter LEAP positions here — parse_positions_from_xml must return
+            # ALL positions including LEAPs so the Futuristic Wheel module can find them.
+            # enrich_wheels_with_positions() already ignores LEAP long calls naturally:
+            #   CSP phase  → only matches short puts (put_call='P', position<0)
+            #   SHARES_HELD→ only matches stocks (asset_category='STK')
+            #   CC phase   → only matches short calls (position<0); LEAPs are long (position>0)
 
             positions.append({
                 'symbol': symbol,
