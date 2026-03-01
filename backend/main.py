@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import os
 from dotenv import load_dotenv
 from auth import verify_token, format_currency
@@ -9,15 +10,63 @@ import time
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_user_config, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores, get_daily_pnl
+from database import get_user_config, get_all_users, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores, get_daily_pnl
 from trade_categorizer import categorize_trades, fetch_flex_report, parse_trades_from_xml, parse_positions_from_xml
 from models import Trade, ActionType, WheelPhase
 from pydantic import BaseModel
 from typing import Optional, Dict
 from wheel_analyzer import identify_new_wheels, merge_new_wheels, process_wheels, enrich_wheels_with_positions
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 load_dotenv()
-app = FastAPI()
+
+
+def auto_pmcc_sync_job():
+    """Scheduled job: run PMCC sync for every user with pmcc_auto_sync enabled."""
+    from routers.futuristic_wheel import _do_pmcc_sync
+    print('[AutoSync] Starting scheduled PMCC sync...')
+    try:
+        users = get_all_users()
+    except Exception as e:
+        print(f'[AutoSync] Failed to load users: {e}')
+        return
+    for cfg in users:
+        if not cfg.get('pmcc_auto_sync'):
+            continue
+        email         = cfg.get('username', '')
+        ibkr_token    = cfg.get('ibkr_token', '')
+        ibkr_query_id = cfg.get('ibkr_query_id', '')
+        if not email or not ibkr_token or not ibkr_query_id:
+            print(f'[AutoSync] Skipping {email}: missing IBKR credentials')
+            continue
+        try:
+            result = _do_pmcc_sync(email, ibkr_token, ibkr_query_id)
+            print(f'[AutoSync] {email}: {result.get("calls_processed", 0)} calls, '
+                  f'{result.get("leaps_found", 0)} LEAPs')
+        except Exception as e:
+            print(f'[AutoSync] ERROR for {email}: {e}')
+
+
+_scheduler = BackgroundScheduler()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _scheduler.add_job(
+        auto_pmcc_sync_job,
+        CronTrigger(hour=2, minute=0, timezone='Europe/Berlin'),
+        id='pmcc_auto_sync',
+        replace_existing=True,
+    )
+    _scheduler.start()
+    print('[Scheduler] PMCC auto-sync scheduled at 02:00 Europe/Berlin daily.')
+    yield
+    _scheduler.shutdown(wait=False)
+    print('[Scheduler] Shut down.')
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

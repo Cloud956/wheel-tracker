@@ -55,6 +55,23 @@ def get_user_config(email: str) -> Optional[Dict[str, Any]]:
     except ClientError as e:
         return None
 
+
+def get_all_users() -> List[Dict[str, Any]]:
+    """Scan and return all user config records (used by the background scheduler)."""
+    table = dynamodb.Table(USER_TABLE_NAME)
+    try:
+        result: List[Dict[str, Any]] = []
+        response = table.scan()
+        result.extend(response.get('Items', []))
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            result.extend(response.get('Items', []))
+        return result
+    except ClientError as e:
+        print(f'ERROR scanning users: {e}')
+        return []
+
+
 def update_user_config(email: str, config: Dict[str, Any]) -> bool:
     """
     Update user configuration in DynamoDB.

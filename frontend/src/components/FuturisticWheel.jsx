@@ -66,6 +66,7 @@ function FuturisticWheel({ onLogout }) {
   const [syncing,     setSyncing]     = useState(false);
   const [syncResult,  setSyncResult]  = useState(null);
   const [purging,     setPurging]     = useState(false);
+  const [autoSync,    setAutoSync]    = useState(false);
   const [deltaInputs, setDeltaInputs] = useState({});    // { GOOGL: "0.35" }
   const [savingDelta, setSavingDelta] = useState({});    // { GOOGL: true/false }
 
@@ -83,6 +84,7 @@ function FuturisticWheel({ onLogout }) {
       if (!resp.ok) throw new Error('Failed to load Futuristic Wheel data');
       const d = await resp.json();
       setData(d);
+      setAutoSync(d.settings?.auto_sync ?? false);
       // Pre-populate delta inputs from stored values
       const storedDeltas = d.leaps?.pmcc_deltas || {};
       const inputs = {};
@@ -143,6 +145,24 @@ function FuturisticWheel({ onLogout }) {
       setSyncResult({ status: 'error', message: e.message });
     } finally {
       setPurging(false);
+    }
+  };
+
+  // ── Auto-sync toggle ──────────────────────────────────────────────
+  const handleAutoSyncToggle = async (e) => {
+    const enabled = e.target.checked;
+    setAutoSync(enabled);
+    try {
+      const token = Cookies.get('token');
+      if (!token) { onLogout(); return; }
+      await fetch(`${API_BASE}/futuristic-wheel/auto-sync`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+    } catch (e) {
+      setAutoSync(!enabled); // revert on error
+      alert('Failed to save auto-sync setting');
     }
   };
 
@@ -215,6 +235,13 @@ function FuturisticWheel({ onLogout }) {
         <button className="fw-purge-btn" onClick={handlePurge} disabled={purging || syncing}>
           {purging ? '⏳ Purging…' : '🗑️ Purge Data'}
         </button>
+        <label className="fw-autosync-label" title="Automatically sync every day at 02:00 CET">
+          <span className="fw-autosync-text">Auto-sync 02:00</span>
+          <span className={`fw-autosync-track ${autoSync ? 'fw-autosync-on' : ''}`}
+                onClick={() => handleAutoSyncToggle({ target: { checked: !autoSync } })}>
+            <span className="fw-autosync-thumb" />
+          </span>
+        </label>
       </div>
 
       {/* Sync result banner */}

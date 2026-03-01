@@ -31,6 +31,10 @@ class DeltaUpdate(BaseModel):
     delta: float
 
 
+class AutoSyncToggle(BaseModel):
+    enabled: bool
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_pmcc_deltas(config: dict) -> dict:
@@ -144,70 +148,75 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
             },
             'daily_pnl_series': daily_pnl_series,
         },
+        'settings': {
+            'auto_sync': bool(config.get('pmcc_auto_sync', False)),
+        },
+    }
+
+
+def _do_pmcc_sync(email: str, ibkr_token: str, ibkr_query_id: str) -> dict:
+    """Core PMCC sync logic — used by both the HTTP endpoint and the background scheduler."""
+    xml_content    = fetch_flex_report(ibkr_token, ibkr_query_id)
+    trades         = parse_trades_from_xml(xml_content)
+    positions      = parse_positions_from_xml(xml_content)
+    leap_positions = parse_leap_positions(positions)
+
+    if not leap_positions:
+        return {
+            'status':          'success',
+            'message':         'No long call (LEAP) positions found in the flex report.',
+            'leaps_found':     0,
+            'calls_processed': 0,
+        }
+
+    leap_symbols = {lp['symbol'] for lp in leap_positions}
+    today        = datetime.utcnow().strftime('%Y-%m-%d')
+    save_pmcc_leap_snapshot(email, today, leap_positions)
+
+    short_calls = build_pmcc_short_calls(trades, leap_symbols)
+    calls_saved = save_pmcc_short_calls(email, short_calls) if short_calls else 0
+
+    return {
+        'status':          'success',
+        'leaps_found':     len(leap_positions),
+        'leap_symbols':    sorted(leap_symbols),
+        'snapshot_date':   today,
+        'calls_processed': len(short_calls),
+        'calls_saved':     calls_saved,
+        'open_calls':      sum(1 for c in short_calls if c['status'] == 'open'),
+        'closed_calls':    sum(1 for c in short_calls if c['status'] == 'closed'),
+        'expired_calls':   sum(1 for c in short_calls if c['status'] == 'expired'),
     }
 
 
 @router.post("/sync")
 def sync_futuristic_wheel(user: dict = Depends(verify_token)):
     """Sync LEAP positions and PMCC short call history from IBKR flex report."""
-    email = user.get('email')
-
+    email  = user.get('email')
     config = get_user_config(email)
     if not config:
-        raise HTTPException(status_code=404, detail="User configuration not found")
-
+        raise HTTPException(status_code=404, detail='User configuration not found')
     ibkr_token    = config.get('ibkr_token')
     ibkr_query_id = config.get('ibkr_query_id')
     if not ibkr_token or not ibkr_query_id:
-        raise HTTPException(
-            status_code=400,
-            detail="IBKR token and query_id must be configured in Account Settings"
-        )
-
+        raise HTTPException(status_code=400,
+            detail='IBKR token and query_id must be configured in Account Settings')
     try:
-        # Fetch and parse flex report
-        xml_content  = fetch_flex_report(ibkr_token, ibkr_query_id)
-        trades       = parse_trades_from_xml(xml_content)
-        positions    = parse_positions_from_xml(xml_content)
-
-        # Identify LEAP (long call) positions
-        leap_positions = parse_leap_positions(positions)
-
-        if not leap_positions:
-            return {
-                'status':          'success',
-                'message':         'No long call (LEAP) positions found in the flex report.',
-                'leaps_found':     0,
-                'calls_processed': 0,
-            }
-
-        leap_symbols = {lp['symbol'] for lp in leap_positions}
-
-        # Save daily LEAP snapshot (upserts — re-syncing same day just overwrites)
-        today = datetime.utcnow().strftime('%Y-%m-%d')
-        save_pmcc_leap_snapshot(email, today, leap_positions)
-
-        # Build and save short call history
-        short_calls  = build_pmcc_short_calls(trades, leap_symbols)
-        calls_saved  = save_pmcc_short_calls(email, short_calls) if short_calls else 0
-
-        return {
-            'status':          'success',
-            'leaps_found':     len(leap_positions),
-            'leap_symbols':    sorted(leap_symbols),
-            'snapshot_date':   today,
-            'calls_processed': len(short_calls),
-            'calls_saved':     calls_saved,
-            'open_calls':      sum(1 for c in short_calls if c['status'] == 'open'),
-            'closed_calls':    sum(1 for c in short_calls if c['status'] == 'closed'),
-            'expired_calls':   sum(1 for c in short_calls if c['status'] == 'expired'),
-        }
+        return _do_pmcc_sync(email, ibkr_token, ibkr_query_id)
     except HTTPException:
         raise
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f'Sync failed: {str(e)}')
+
+
+@router.put("/auto-sync")
+def set_auto_sync(body: AutoSyncToggle, user: dict = Depends(verify_token)):
+    """Toggle daily automatic PMCC sync for this user (runs at 02:00 CET)."""
+    email = user.get('email')
+    update_user_config(email, {'pmcc_auto_sync': body.enabled})
+    return {'status': 'success', 'auto_sync': body.enabled}
 
 
 @router.delete("/purge-calls")
