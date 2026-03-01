@@ -125,6 +125,16 @@ def parse_positions_from_xml(xml_content: str) -> List[Dict[str, Any]]:
                 if exp_str and exp_str.lower() != 'nan':
                     expiry_val = exp_str
 
+            # Filter out LEAPS positions: skip options expiring more than 1 year from now
+            if asset_category == 'OPT' and expiry_val:
+                try:
+                    exp_date = datetime.strptime(expiry_val[:8], "%Y%m%d")
+                    if (exp_date - datetime.now()).days > 365:
+                        print(f"SKIPPING LEAP position: {symbol} expiry={expiry_val}")
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
             positions.append({
                 'symbol': symbol,
                 'asset_category': asset_category,
@@ -217,6 +227,20 @@ def parse_trades_from_xml(xml_content: str) -> List[Trade]:
                 strike_val = float(strike_str)
             except (ValueError, TypeError):
                 pass # Keep None if parse fails
+
+        # Filter out LEAPS: skip options with expiry more than 1 year from now
+        if asset_cat == 'OPT':
+            expiry_raw = row.get('expiry') or row.get('lastTradingDayOrContractMonth')
+            if expiry_raw is not None and pd.notna(expiry_raw):
+                exp_str = str(expiry_raw).strip()
+                if exp_str and exp_str.lower() != 'nan':
+                    try:
+                        exp_date = datetime.strptime(exp_str[:8], "%Y%m%d")
+                        if (exp_date - datetime.now()).days > 365:
+                            print(f"SKIPPING LEAP: {row.get('underlyingSymbol', row.get('symbol'))} expiry={exp_str}")
+                            continue
+                    except (ValueError, TypeError):
+                        pass  # If we can't parse the expiry, don't filter it out
 
         trade = Trade(
             trade_id=unique_id, 

@@ -89,8 +89,10 @@ function AnalyticsPage({ onLogout }) {
     { label: 'Win Rate',         value: `${ov.win_rate}%`,    icon: '🎯',
       cls: ov.win_rate >= 50 ? 'c-green' : 'c-red' },
     // Row 2 — PnL
-    { label: 'Total PnL',        value: fmt$(ov.total_realized_pnl),  icon: '💰',
+    { label: 'Realized PnL',     value: fmt$(ov.total_realized_pnl),  icon: '💰',
       cls: ov.total_realized_pnl >= 0 ? 'c-green' : 'c-red' },
+    { label: 'Open Unrealized',  value: fmt$(ov.open_unrealized_pnl), icon: '📐',
+      cls: (ov.open_unrealized_pnl ?? 0) >= 0 ? 'c-green' : 'c-red' },
     { label: 'Best Wheel',       value: fmt$(ov.best_wheel_pnl),      icon: '🏆', cls: 'c-green' },
     { label: 'Worst Wheel',      value: fmt$(ov.worst_wheel_pnl),     icon: '📉',
       cls: ov.worst_wheel_pnl >= 0 ? 'c-green' : 'c-red' },

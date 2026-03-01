@@ -199,7 +199,12 @@ def get_analytics(user: dict = Depends(verify_token)):
 
     # ── Overview stats ─────────────────────────────────────────────
     closed_pnl_list   = [realized_pnl(w) for w in closed_wheels]
-    total_realized    = sum(realized_pnl(w) for w in wheels)
+    # total_realized: only truly closed wheels — open wheel premiums are NOT realized yet
+    total_realized    = sum(closed_pnl_list)
+    # open_unrealized: current mark-to-market exposure on all open wheels
+    open_unrealized   = sum((w.unrealized_pnl or 0.0) for w in open_wheels)
+    # open_premiums_collected: cash already received on open wheels (at risk until closed)
+    open_premiums_collected = sum(w.premium_collected for w in open_wheels)
     winning_closed    = [p for p in closed_pnl_list if p > 0]
     win_rate          = (len(winning_closed) / len(closed_wheels) * 100) if closed_wheels else 0
     avg_pnl           = (sum(closed_pnl_list) / len(closed_pnl_list)) if closed_pnl_list else 0
@@ -222,7 +227,7 @@ def get_analytics(user: dict = Depends(verify_token)):
     if all_starts:
         first_date  = min(all_starts)
         total_days  = max((datetime.now() - first_date).days, 1)
-        return_per_day = total_realized / total_days
+        return_per_day = total_realized / total_days  # based on closed-only realized PnL
     else:
         return_per_day = 0
 
@@ -236,23 +241,25 @@ def get_analytics(user: dict = Depends(verify_token)):
     avg_trades_per_wheel = total_trades / len(wheels) if wheels else 0
 
     overview = {
-        "total_wheels":        len(wheels),
-        "open_wheels":         len(open_wheels),
-        "closed_wheels":       len(closed_wheels),
-        "win_rate":            round(win_rate, 1),
-        "total_realized_pnl":  round(total_realized, 2),
-        "best_wheel_pnl":      round(best_pnl, 2),
-        "worst_wheel_pnl":     round(worst_pnl, 2),
-        "avg_pnl_per_wheel":   round(avg_pnl, 2),
-        "total_premiums":      round(total_premiums, 2),
-        "total_commissions":   round(total_commissions, 2),
-        "avg_premium_per_wheel": round(avg_premium, 2),
-        "max_single_premium":  round(max_premium, 2),
-        "avg_hold_days":       round(avg_hold_days, 1),
-        "return_per_day":      round(return_per_day, 2),
-        "total_trades":        total_trades,
-        "avg_trades_per_wheel": round(avg_trades_per_wheel, 1),
-        "unique_symbols":      unique_symbols,
+        "total_wheels":             len(wheels),
+        "open_wheels":              len(open_wheels),
+        "closed_wheels":            len(closed_wheels),
+        "win_rate":                 round(win_rate, 1),
+        "total_realized_pnl":       round(total_realized, 2),       # closed wheels only
+        "open_unrealized_pnl":      round(open_unrealized, 2),      # unrealized on open wheels
+        "open_premiums_collected":  round(open_premiums_collected, 2), # cash received on open wheels
+        "best_wheel_pnl":           round(best_pnl, 2),
+        "worst_wheel_pnl":          round(worst_pnl, 2),
+        "avg_pnl_per_wheel":        round(avg_pnl, 2),
+        "total_premiums":           round(total_premiums, 2),
+        "total_commissions":        round(total_commissions, 2),
+        "avg_premium_per_wheel":    round(avg_premium, 2),
+        "max_single_premium":       round(max_premium, 2),
+        "avg_hold_days":            round(avg_hold_days, 1),
+        "return_per_day":           round(return_per_day, 2),
+        "total_trades":             total_trades,
+        "avg_trades_per_wheel":     round(avg_trades_per_wheel, 1),
+        "unique_symbols":           unique_symbols,
     }
 
     # ── By symbol ──────────────────────────────────────────────────
@@ -389,7 +396,7 @@ def get_wheel_summary(user: dict = Depends(verify_token)):
                     "price": format_currency(t.trade.trade_price),
                     "quantity": t.trade.quantity,
                     "type": t.trade.asset_category
-                } for t in w.trades
+                } for t in sorted(w.trades, key=lambda t: t.trade.datetime)
             ]
         })
         
