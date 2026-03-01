@@ -105,7 +105,9 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
     total_realized = round(sum(closed_pnls), 2)
     avg_pnl        = round(total_realized / len(closed_pnls), 2) if closed_pnls else 0
 
-    # ── Daily P&L series (from START_DATE) ───────────────────────────────────
+    # ── Daily P&L series (from START_DATE, gap-filled to today) ─────────────
+    # Bucket realised PnL by close date
+    from datetime import date as _date, timedelta
     daily_map: dict = {}
     for c in short_calls:
         if c.get('status') not in ('closed', 'expired'):
@@ -116,15 +118,22 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
         pnl = c.get('pnl') or 0.0
         daily_map[close_dt] = round(daily_map.get(close_dt, 0.0) + pnl, 2)
 
+    # Walk every calendar day from START_DATE to today, carrying cumulative forward
+    start_d = _date(int(START_DATE[:4]), int(START_DATE[5:7]), int(START_DATE[8:10]))
+    today_d  = _date.today()
     daily_pnl_series = []
     cumulative = 0.0
-    for d in sorted(daily_map):
-        cumulative = round(cumulative + daily_map[d], 2)
+    cursor = start_d
+    while cursor <= today_d:
+        ds        = cursor.strftime('%Y-%m-%d')
+        day_pnl   = daily_map.get(ds, 0.0)
+        cumulative = round(cumulative + day_pnl, 2)
         daily_pnl_series.append({
-            'date':           d,
-            'daily_pnl':      round(daily_map[d], 2),
+            'date':           ds,
+            'daily_pnl':      round(day_pnl, 2),
             'cumulative_pnl': cumulative,
         })
+        cursor += timedelta(days=1)
 
     return {
         'leaps': {
