@@ -156,10 +156,12 @@ def build_pmcc_short_calls(trades: List[Trade], leap_symbols: Set[str]) -> List[
             break
 
         # Build deterministic call_id
+        # Use trade_id (derived from ib_exec_id) to guarantee uniqueness even with
+        # partial fills at the same timestamp.
         expiry_str = open_expiry.strftime('%Y-%m-%d') if open_expiry else None
         expiry_id  = open_expiry.strftime('%Y%m%d')   if open_expiry else 'NOEXP'
         strike_id  = str(int(ot.strike)) if ot.strike else 'NOSTRIKE'
-        call_id    = f"{ot.symbol}_{expiry_id}_{strike_id}_{ot.datetime.strftime('%Y%m%d%H%M%S')}"
+        call_id    = f"{ot.symbol}_{expiry_id}_{strike_id}_{ot.trade_id}"
 
         contracts        = int(abs(ot.quantity))
         premium_received = round(contracts * ot.trade_price * 100.0, 2)
