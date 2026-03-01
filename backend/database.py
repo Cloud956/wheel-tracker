@@ -362,12 +362,57 @@ def _safe_decimal(val) -> Decimal:
         return Decimal('0')
 
 
+def delete_pmcc_short_calls(username: str) -> int:
+    """Delete ALL PMCC short call records for a user. Returns count deleted."""
+    table = dynamodb.Table(PMCC_SHORT_CALLS_TABLE)
+    try:
+        from boto3.dynamodb.conditions import Key
+        response = table.query(KeyConditionExpression=Key('username').eq(username))
+        items = response.get('Items', [])
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey'],
+            )
+            items.extend(response.get('Items', []))
+        if items:
+            with table.batch_writer() as batch:
+                for item in items:
+                    batch.delete_item(Key={'username': item['username'], 'call_id': item['call_id']})
+        return len(items)
+    except ClientError as e:
+        print(f"ERROR deleting pmcc_short_calls for {username}: {e}")
+        return 0
+
+
 def save_pmcc_short_calls(username: str, calls: List[Dict[str, Any]]) -> int:
     """
-    Upsert all PMCC short call records.
+    Full-replace all PMCC short call records for a user.
+    Deletes all existing records first, then writes the new batch.
     PK: username  |  SK: call_id
     """
     table = dynamodb.Table(PMCC_SHORT_CALLS_TABLE)
+
+    # 1. Delete all existing records for this user
+    try:
+        from boto3.dynamodb.conditions import Key
+        response = table.query(KeyConditionExpression=Key('username').eq(username))
+        existing = response.get('Items', [])
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(username),
+                ExclusiveStartKey=response['LastEvaluatedKey'],
+            )
+            existing.extend(response.get('Items', []))
+
+        if existing:
+            with table.batch_writer() as batch:
+                for item in existing:
+                    batch.delete_item(Key={'username': item['username'], 'call_id': item['call_id']})
+    except ClientError as e:
+        print(f"WARN: could not purge old pmcc_short_calls for {username}: {e}")
+
+    # 2. Write the new batch
     count = 0
     with table.batch_writer() as batch:
         for call in calls:

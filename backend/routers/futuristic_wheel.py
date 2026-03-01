@@ -210,6 +210,39 @@ def sync_futuristic_wheel(user: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
 
 
+@router.delete("/purge-calls")
+def purge_short_calls(user: dict = Depends(verify_token)):
+    """One-time purge of all stored PMCC short call records for this user."""
+    from database import get_pmcc_short_calls
+    from boto3.dynamodb.conditions import Key
+    import boto3, os
+    from botocore.exceptions import ClientError
+
+    email = user.get('email')
+    table_name = os.getenv("DYNAMODB_PMCC_SHORT_CALLS_TABLE", "pmcc_short_calls")
+    dynamodb = boto3.resource('dynamodb', region_name=os.getenv("AWS_REGION", "eu-central-1"))
+    table = dynamodb.Table(table_name)
+
+    try:
+        response = table.query(KeyConditionExpression=Key('username').eq(email))
+        items = response.get('Items', [])
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=Key('username').eq(email),
+                ExclusiveStartKey=response['LastEvaluatedKey'],
+            )
+            items.extend(response.get('Items', []))
+
+        if items:
+            with table.batch_writer() as batch:
+                for item in items:
+                    batch.delete_item(Key={'username': item['username'], 'call_id': item['call_id']})
+
+        return {'status': 'success', 'deleted': len(items)}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/delta")
 def update_delta(body: DeltaUpdate, user: dict = Depends(verify_token)):
     """Save the manual per-contract delta for a LEAP symbol."""

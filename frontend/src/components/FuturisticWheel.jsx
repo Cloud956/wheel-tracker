@@ -65,6 +65,7 @@ function FuturisticWheel({ onLogout }) {
   const [error,       setError]       = useState(null);
   const [syncing,     setSyncing]     = useState(false);
   const [syncResult,  setSyncResult]  = useState(null);
+  const [purging,     setPurging]     = useState(false);
   const [deltaInputs, setDeltaInputs] = useState({});    // { GOOGL: "0.35" }
   const [savingDelta, setSavingDelta] = useState({});    // { GOOGL: true/false }
 
@@ -119,6 +120,29 @@ function FuturisticWheel({ onLogout }) {
       setSyncResult({ status: 'error', message: e.message });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  // ── Purge ────────────────────────────────────────────────────────────────────
+  const handlePurge = async () => {
+    if (!window.confirm('Delete ALL stored short call records? You will need to sync again to repopulate.')) return;
+    setPurging(true);
+    setSyncResult(null);
+    try {
+      const token = Cookies.get('token');
+      if (!token) { onLogout(); return; }
+      const resp = await fetch(`${API_BASE}/futuristic-wheel/purge-calls`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.status === 401) { onLogout(); return; }
+      const result = await resp.json();
+      setSyncResult({ status: 'success', message: `🗑️ Purged ${result.deleted} record(s). Sync to repopulate.` });
+      await fetchData();
+    } catch (e) {
+      setSyncResult({ status: 'error', message: e.message });
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -185,8 +209,11 @@ function FuturisticWheel({ onLogout }) {
       <div className="fw-header">
         <button className="fw-back" onClick={() => navigate('/')}>← Home</button>
         <h1>⚡ Futuristic Wheel</h1>
-        <button className="fw-sync-btn" onClick={handleSync} disabled={syncing}>
+        <button className="fw-sync-btn" onClick={handleSync} disabled={syncing || purging}>
           {syncing ? '⏳ Syncing…' : '🔄 Sync'}
+        </button>
+        <button className="fw-purge-btn" onClick={handlePurge} disabled={purging || syncing}>
+          {purging ? '⏳ Purging…' : '🗑️ Purge Data'}
         </button>
       </div>
 
@@ -194,7 +221,7 @@ function FuturisticWheel({ onLogout }) {
       {syncResult && (
         <div className={`fw-banner ${syncResult.status === 'success' ? 'fw-banner-ok' : 'fw-banner-err'}`}>
           {syncResult.status === 'success'
-            ? `✅ ${syncResult.leaps_found ?? 0} LEAP(s) snapshotted (${syncResult.leap_symbols?.join(', ')}) · ${syncResult.calls_processed ?? 0} calls processed`
+            ? (syncResult.message ?? `✅ ${syncResult.leaps_found ?? 0} LEAP(s) snapshotted (${syncResult.leap_symbols?.join(', ')}) · ${syncResult.calls_processed ?? 0} calls processed`)
             : `❌ ${syncResult.message || 'Sync failed'}`}
         </div>
       )}

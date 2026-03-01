@@ -49,6 +49,20 @@
 .fw-sync-btn:hover    { background: #9333ea; }
 .fw-sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.fw-purge-btn {
+  background: #ef4444;
+  border: none;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.2s, opacity 0.2s;
+}
+.fw-purge-btn:hover    { background: #dc2626; }
+.fw-purge-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* ── Sync result banner ── */
 .fw-banner {
   border-radius: 8px;
