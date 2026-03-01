@@ -125,6 +125,13 @@ def build_pmcc_short_calls(trades: List[Trade], leap_symbols: Set[str]) -> List[
             raw_closes.append({'trade': t, 'expiry': expiry})
 
     # ── Step 2: Group partial fills ───────────────────────────────────────────
+    print(f"[PMCC] raw_opens: {len(raw_opens)}, raw_closes: {len(raw_closes)}")
+    for item in raw_opens:
+        t = item['trade']
+        print(f"  OPEN  {t.symbol} strike={t.strike} qty={t.quantity} date={t.datetime.date()} expiry={item['expiry']} trade_expiry={t.expiry}")
+    for item in raw_closes:
+        t = item['trade']
+        print(f"  CLOSE {t.symbol} strike={t.strike} qty={t.quantity} date={t.datetime.date()} expiry={item['expiry']} trade_expiry={t.expiry}")
     def fill_key(item: Dict) -> tuple:
         t         = item['trade']
         exp_id    = item['expiry'].strftime('%Y%m%d') if item['expiry'] else 'NOEXP'
@@ -178,13 +185,16 @@ def build_pmcc_short_calls(trades: List[Trade], leap_symbols: Set[str]) -> List[
         call_id    = f"{sym}_{expiry_id}_{strike_id}_{open_date_str.replace('-', '')}"
         expiry_str = open_expiry.strftime('%Y-%m-%d') if open_expiry else None
 
-        # Find earliest close matching symbol+strike+expiry, strictly after open date
+        # Find earliest close matching symbol+strike, strictly after open date.
+        # Expiry must match when BOTH sides have it; if either is NOEXP, match on symbol+strike alone.
         matched_close = None
         for close_key in sorted(merged_closes.keys(), key=lambda k: k[3]):
             if close_key in consumed_close_keys:
                 continue
             c_sym, c_strike_id, c_expiry_id, c_date_str = close_key
-            if c_sym != sym or c_strike_id != strike_id or c_expiry_id != expiry_id:
+            if c_sym != sym or c_strike_id != strike_id:
+                continue
+            if c_expiry_id != expiry_id and c_expiry_id != 'NOEXP' and expiry_id != 'NOEXP':
                 continue
             if c_date_str <= open_date_str:
                 continue
