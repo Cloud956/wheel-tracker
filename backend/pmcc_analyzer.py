@@ -197,7 +197,8 @@ def build_pmcc_short_calls(trades: List[Trade], leap_symbols: Set[str]) -> List[
         open_commission  = open_mg['total_comm']
 
         # Stable call_id based on group key (not per-fill trade_id)
-        call_id    = f"{sym}_{expiry_id}_{strike_id}_{open_date_str.replace('-', '')}"        expiry_str = open_expiry.strftime('%Y-%m-%d') if open_expiry else None
+        call_id    = f"{sym}_{expiry_id}_{strike_id}_{open_date_str.replace('-', '')}"
+        expiry_str = open_expiry.strftime('%Y-%m-%d') if open_expiry else None
 
         # Find earliest close matching symbol+strike, strictly after open date.
         # Expiry must match when BOTH sides have it; if either is NOEXP, match on symbol+strike alone.
