@@ -339,3 +339,32 @@
   .fw-grid   { grid-template-columns: repeat(2, 1fr); }
   .fw-grid-5 { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ── Live Market Data ─────────────────────────────────────────────────────── */
+
+.fw-section-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.fw-section-header .fw-section-title {
+  margin-bottom: 0;
+}
+
+.fw-market-btn {
+  background: #0ea5e9;
+  border: none;
+  color: #fff;
+  padding: 6px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: background 0.2s, opacity 0.2s;
+}
+.fw-market-btn:hover    { background: #0284c7; }
+.fw-market-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.fw-cyan { color: #22d3ee; }

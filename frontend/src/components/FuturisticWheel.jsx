@@ -19,6 +19,15 @@ const fmt$ = (v) =>
 
 const fmtDate = (s) => (s ? s.slice(0, 10) : '—');
 
+/** Normalise expiry to YYYY-MM-DD regardless of whether it arrives as YYYYMMDD */
+const normalizeExpiry = (expiry) => {
+  if (!expiry) return '';
+  const s = expiry.slice(0, 10);
+  if (s.length === 8 && !s.includes('-'))
+    return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  return s;
+};
+
 // ── Custom Tooltips ───────────────────────────────────────────────────────────
 
 const LeapTooltip = ({ active, payload, label }) => {
@@ -67,8 +76,11 @@ function FuturisticWheel({ onLogout }) {
   const [syncResult,  setSyncResult]  = useState(null);
   const [purging,     setPurging]     = useState(false);
   const [autoSync,    setAutoSync]    = useState(false);
-  const [deltaInputs, setDeltaInputs] = useState({});    // { GOOGL: "0.35" }
-  const [savingDelta, setSavingDelta] = useState({});    // { GOOGL: true/false }
+  const [deltaInputs,    setDeltaInputs]    = useState({});    // { GOOGL: "0.35" }
+  const [savingDelta,    setSavingDelta]    = useState({});    // { GOOGL: true/false }
+  const [marketData,     setMarketData]     = useState({});    // { GOOGL: { price, leaps } }
+  const [fetchingMarket, setFetchingMarket] = useState(false);
+  const [marketError,    setMarketError]    = useState(null);
 
   // ── Fetch data ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -190,6 +202,41 @@ function FuturisticWheel({ onLogout }) {
     }
   };
 
+  // ── Fetch live market data (manual) ────────────────────────────────────────
+  const handleFetchMarketData = async () => {
+    setFetchingMarket(true);
+    setMarketError(null);
+    try {
+      const token = Cookies.get('token');
+      if (!token) { onLogout(); return; }
+      const resp = await fetch(`${API_BASE}/futuristic-wheel/market-data`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.status === 401) { onLogout(); return; }
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to fetch market data');
+      }
+      const result = await resp.json();
+      setMarketData(result.results || {});
+    } catch (e) {
+      setMarketError(e.message);
+    } finally {
+      setFetchingMarket(false);
+    }
+  };
+
+  /** Return the matching options greek entry from marketData for a given LEAP row. */
+  const getLiveGreeks = (symbol, strike, expiry) => {
+    const symData = marketData[symbol];
+    if (!symData) return null;
+    const norm = normalizeExpiry(expiry || '');
+    return symData.leaps?.find(l =>
+      Math.abs((l.strike || 0) - parseFloat(strike || 0)) < 0.01 &&
+      l.expiry === norm
+    ) ?? null;
+  };
+
   // ── Loading / error states ──────────────────────────────────────────────────
   if (loading) return (
     <div className="fw-page fw-center">
@@ -257,7 +304,20 @@ function FuturisticWheel({ onLogout }) {
           LEAPS SECTION
       ═══════════════════════════════════════════════════════════ */}
       <section className="fw-section">
-        <h2 className="fw-section-title">📈 LEAP Positions</h2>
+        <div className="fw-section-header">
+          <h2 className="fw-section-title">📈 LEAP Positions</h2>
+          <button
+            className="fw-market-btn"
+            onClick={handleFetchMarketData}
+            disabled={fetchingMarket || !hasLeaps}
+            title="Fetch live price + greeks from Alpha Vantage (manual to preserve 25 req/day limit)"
+          >
+            {fetchingMarket ? '⏳ Fetching…' : '📡 Live Data'}
+          </button>
+        </div>
+        {marketError && (
+          <div className="fw-banner fw-banner-err">❌ Market data error: {marketError}</div>
+        )}
 
         {/* Summary tiles */}
         <div className="fw-grid">
@@ -353,6 +413,9 @@ function FuturisticWheel({ onLogout }) {
                     <th>Unrealized P&L</th>
                     <th>Delta (Δ)</th>
                     <th>Total Δ</th>
+                    <th>Live Price</th>
+                    <th>Live Δ</th>
+                    <th>Live Γ</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -372,6 +435,15 @@ function FuturisticWheel({ onLogout }) {
                       </td>
                       <td className="fw-purple">
                         {l.total_delta != null ? l.total_delta.toFixed(2) : '—'}
+                      </td>
+                      <td className="fw-cyan">
+                        {marketData[l.symbol]?.price != null ? fmt$(marketData[l.symbol].price) : '—'}
+                      </td>
+                      <td className="fw-cyan">
+                        {(() => { const g = getLiveGreeks(l.symbol, l.strike, l.expiry); return g?.delta != null ? g.delta.toFixed(4) : '—'; })()}
+                      </td>
+                      <td className="fw-cyan">
+                        {(() => { const g = getLiveGreeks(l.symbol, l.strike, l.expiry); return g?.gamma != null ? g.gamma.toFixed(5) : '—'; })()}
                       </td>
                     </tr>
                   ))}

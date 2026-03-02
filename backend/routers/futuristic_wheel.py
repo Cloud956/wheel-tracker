@@ -328,3 +328,127 @@ def update_delta(body: DeltaUpdate, user: dict = Depends(verify_token)):
     if not success:
         raise HTTPException(status_code=500, detail="Failed to save delta")
     return {'status': 'success', 'symbol': body.symbol, 'delta': body.delta}
+
+
+@router.get("/market-data")
+def get_market_data(user: dict = Depends(verify_token)):
+    """Fetch live underlying price and LEAP option greeks from Alpha Vantage.
+
+    Makes two Alpha Vantage calls per symbol:
+      1. GLOBAL_QUOTE  → current underlying price
+      2. REALTIME_OPTIONS → full options chain with greeks; matched to held LEAP
+         by strike + expiry to return delta and gamma.
+
+    This endpoint is intentionally manual (not automatic) to stay within the
+    Alpha Vantage free-tier limit of 25 requests / day.
+    """
+    import os, time
+    import requests as req
+
+    email   = user.get('email')
+    api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+    if not api_key:
+        raise HTTPException(status_code=500,
+            detail='Alpha Vantage API key not configured on the server')
+
+    snapshots = get_pmcc_leap_snapshots(email)
+    if not snapshots:
+        return {'results': {}}
+
+    latest_date  = max(s.get('snapshot_date', '') for s in snapshots)
+    latest_leaps = [s for s in snapshots if s.get('snapshot_date') == latest_date]
+
+    AV_BASE = 'https://www.alphavantage.co/query'
+
+    # ── Group leaps by symbol ─────────────────────────────────────────────────
+    by_symbol: dict = {}
+    for leap in latest_leaps:
+        sym = leap.get('symbol', '')
+        if not sym:
+            continue
+        raw_expiry = (leap.get('expiry') or '')[:10]
+        # Normalise YYYYMMDD → YYYY-MM-DD so it matches Alpha Vantage's format
+        if raw_expiry and len(raw_expiry) == 8 and '-' not in raw_expiry:
+            raw_expiry = f"{raw_expiry[:4]}-{raw_expiry[4:6]}-{raw_expiry[6:8]}"
+        try:
+            strike = float(leap.get('strike') or 0)
+        except (ValueError, TypeError):
+            strike = 0.0
+        if sym not in by_symbol:
+            by_symbol[sym] = []
+        by_symbol[sym].append({'strike': strike, 'expiry': raw_expiry})
+
+    results: dict = {}
+    for symbol, leaps_for_sym in by_symbol.items():
+        sym_result: dict = {'price': None, 'leaps': []}
+
+        # ── 1. Underlying price ───────────────────────────────────────────────
+        try:
+            r    = req.get(AV_BASE, params={
+                'function': 'GLOBAL_QUOTE', 'symbol': symbol, 'apikey': api_key,
+            }, timeout=10)
+            data = r.json()
+            if 'Note' in data or 'Information' in data:
+                sym_result['price_error'] = (
+                    data.get('Note') or data.get('Information', 'API rate limit reached'))
+            else:
+                price_str = data.get('Global Quote', {}).get('05. price', '')
+                sym_result['price'] = float(price_str) if price_str else None
+        except Exception as e:
+            sym_result['price_error'] = str(e)
+
+        time.sleep(0.3)   # brief pause between consecutive AV calls
+
+        # ── 2. Options chain with greeks ──────────────────────────────────────
+        try:
+            r    = req.get(AV_BASE, params={
+                'function': 'REALTIME_OPTIONS', 'symbol': symbol, 'apikey': api_key,
+            }, timeout=20)
+            data = r.json()
+            if 'Note' in data or 'Information' in data:
+                sym_result['greeks_error'] = (
+                    data.get('Note') or data.get('Information', 'API rate limit reached'))
+                options_list = []
+            else:
+                options_list = data.get('data', [])
+
+            for leap_info in leaps_for_sym:
+                greek_entry: dict = {
+                    'strike': leap_info['strike'],
+                    'expiry': leap_info['expiry'],
+                    'delta':  None,
+                    'gamma':  None,
+                }
+                for opt in options_list:
+                    if opt.get('type', '').lower() != 'call':
+                        continue
+                    try:
+                        opt_strike = float(opt.get('strike', 0))
+                    except (ValueError, TypeError):
+                        continue
+                    opt_expiry = (opt.get('expiration', '') or '')[:10]
+                    if (abs(opt_strike - leap_info['strike']) < 0.01
+                            and opt_expiry == leap_info['expiry']):
+                        for greek in ('delta', 'gamma'):
+                            try:
+                                val = opt.get(greek, '')
+                                greek_entry[greek] = (
+                                    float(val) if val not in (None, '', 'None') else None)
+                            except (ValueError, TypeError):
+                                pass
+                        break
+                sym_result['leaps'].append(greek_entry)
+
+        except Exception as e:
+            sym_result['greeks_error'] = str(e)
+            for leap_info in leaps_for_sym:
+                sym_result['leaps'].append({
+                    'strike': leap_info['strike'],
+                    'expiry': leap_info['expiry'],
+                    'delta':  None,
+                    'gamma':  None,
+                })
+
+        results[symbol] = sym_result
+
+    return {'results': results}
