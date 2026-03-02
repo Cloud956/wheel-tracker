@@ -10,7 +10,7 @@ import time
 import pandas as pd
 import io
 from datetime import datetime
-from database import get_user_config, get_all_users, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores, get_daily_pnl
+from database import get_user_config, get_all_users, save_wheels, get_wheels, delete_user_wheels, save_highscore, get_highscores, get_daily_pnl, save_daily_pnl
 from trade_categorizer import categorize_trades, fetch_flex_report, parse_trades_from_xml, parse_positions_from_xml
 from models import Trade, ActionType, WheelPhase
 from pydantic import BaseModel
@@ -22,30 +22,110 @@ from apscheduler.triggers.cron import CronTrigger
 load_dotenv()
 
 
-def auto_pmcc_sync_job():
-    """Scheduled job: run PMCC sync for every user with pmcc_auto_sync enabled."""
+# Wheels started on or after this date are eligible for daily PnL tracking
+ELIGIBLE_START = datetime(2026, 3, 2)
+
+
+def _snapshot_daily_pnl(email: str, wheels, today: str) -> None:
+    """Compute and persist today's daily PnL snapshot for *email*.
+
+    Eligible wheels: start_date >= ELIGIBLE_START (2026-03-02).
+    cumulative_pnl  = realized PnL of all closed eligible wheels
+                    + (realized + unrealized) for all open eligible wheels.
+    daily_pnl       = cumulative_pnl – previous stored cumulative_pnl.
+    """
+    eligible = [w for w in wheels if w.start_date and w.start_date >= ELIGIBLE_START]
+    if not eligible:
+        print(f'[DailyPnL] {email}: no eligible wheels (start >= 2026-03-02), skipping')
+        return
+
+    cumulative_pnl = 0.0
+    for w in eligible:
+        realized = w.premium_collected + w.total_commissions
+        if w.is_open:
+            cumulative_pnl += realized + (w.unrealized_pnl or 0.0)
+        else:
+            cumulative_pnl += realized
+    cumulative_pnl = round(cumulative_pnl, 2)
+
+    # Derive daily delta from the last stored record
+    records = get_daily_pnl(email)  # sorted ascending by date
+    if records:
+        last = records[-1]
+        if last['date'] == today:
+            # Job ran twice today — use the record before today for the delta
+            prev_cumulative = records[-2]['cumulative_pnl'] if len(records) > 1 else 0.0
+        else:
+            prev_cumulative = last['cumulative_pnl']
+    else:
+        prev_cumulative = 0.0
+
+    daily_pnl = round(cumulative_pnl - prev_cumulative, 2)
+    save_daily_pnl(email, today, daily_pnl, cumulative_pnl)
+    print(f'[DailyPnL] {email}: date={today} daily={daily_pnl} cumulative={cumulative_pnl}')
+
+
+def auto_nightly_sync_job():
+    """Nightly job at 02:00 Europe/Berlin.
+
+    For every user that has IBKR credentials configured:
+      1. Fetch the Flex report **once** (shared by both sub-tasks below).
+      2. Run PMCC sync if the user has pmcc_auto_sync enabled.
+      3. Refresh stored wheel positions with live market data from the same
+         report, then compute and persist the daily PnL snapshot.
+    """
     from routers.futuristic_wheel import _do_pmcc_sync
-    print('[AutoSync] Starting scheduled PMCC sync...')
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    print(f'[NightlySync] Starting nightly sync for {today}...')
+
     try:
         users = get_all_users()
     except Exception as e:
-        print(f'[AutoSync] Failed to load users: {e}')
+        print(f'[NightlySync] Failed to load users: {e}')
         return
+
     for cfg in users:
-        if not cfg.get('pmcc_auto_sync'):
+        email = cfg.get('username', '')
+        if not email:
             continue
-        email         = cfg.get('username', '')
+
         ibkr_token    = cfg.get('ibkr_token', '')
         ibkr_query_id = cfg.get('ibkr_query_id', '')
-        if not email or not ibkr_token or not ibkr_query_id:
-            print(f'[AutoSync] Skipping {email}: missing IBKR credentials')
-            continue
+        has_ibkr      = bool(ibkr_token and ibkr_query_id)
+
+        trades    = None
+        positions = None
+
+        # ── 1. Fetch Flex report once (shared by PMCC + wheel syncs) ──────────
+        if has_ibkr:
+            try:
+                xml_content = fetch_flex_report(ibkr_token, ibkr_query_id)
+                trades      = parse_trades_from_xml(xml_content)
+                positions   = parse_positions_from_xml(xml_content)
+            except Exception as e:
+                print(f'[NightlySync] {email}: Flex report fetch failed: {e}')
+                # Continue — daily PnL will still run from whatever is stored
+
+        # ── 2. PMCC sync (only for users who opted in) ────────────────────────
+        if has_ibkr and trades is not None and cfg.get('pmcc_auto_sync'):
+            try:
+                result = _do_pmcc_sync(email, trades=trades, positions=positions)
+                print(f'[NightlySync] PMCC {email}: {result.get("calls_processed", 0)} calls, '
+                      f'{result.get("leaps_found", 0)} LEAPs')
+            except Exception as e:
+                print(f'[NightlySync] PMCC ERROR for {email}: {e}')
+
+        # ── 3. Refresh wheel positions and snapshot daily PnL ─────────────────
         try:
-            result = _do_pmcc_sync(email, ibkr_token, ibkr_query_id)
-            print(f'[AutoSync] {email}: {result.get("calls_processed", 0)} calls, '
-                  f'{result.get("leaps_found", 0)} LEAPs')
+            wheels = get_wheels(email)
+            if not wheels:
+                continue
+            if positions is not None:
+                wheels = enrich_wheels_with_positions(wheels, positions)
+                save_wheels(email, [w.dict() for w in wheels])
+            _snapshot_daily_pnl(email, wheels, today)
         except Exception as e:
-            print(f'[AutoSync] ERROR for {email}: {e}')
+            print(f'[NightlySync] Daily PnL ERROR for {email}: {e}')
 
 
 _scheduler = BackgroundScheduler()
@@ -54,13 +134,13 @@ _scheduler = BackgroundScheduler()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _scheduler.add_job(
-        auto_pmcc_sync_job,
+        auto_nightly_sync_job,
         CronTrigger(hour=2, minute=0, timezone='Europe/Berlin'),
-        id='pmcc_auto_sync',
+        id='nightly_sync',
         replace_existing=True,
     )
     _scheduler.start()
-    print('[Scheduler] PMCC auto-sync scheduled at 02:00 Europe/Berlin daily.')
+    print('[Scheduler] Nightly sync (PMCC + daily PnL) scheduled at 02:00 Europe/Berlin.')
     yield
     _scheduler.shutdown(wait=False)
     print('[Scheduler] Shut down.')

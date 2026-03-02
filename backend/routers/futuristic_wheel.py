@@ -191,11 +191,25 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
     }
 
 
-def _do_pmcc_sync(email: str, ibkr_token: str, ibkr_query_id: str) -> dict:
-    """Core PMCC sync logic — used by both the HTTP endpoint and the background scheduler."""
-    xml_content    = fetch_flex_report(ibkr_token, ibkr_query_id)
-    trades         = parse_trades_from_xml(xml_content)
-    positions      = parse_positions_from_xml(xml_content)
+def _do_pmcc_sync(
+    email: str,
+    ibkr_token: str = None,
+    ibkr_query_id: str = None,
+    *,
+    trades=None,
+    positions=None,
+) -> dict:
+    """Core PMCC sync logic — used by both the HTTP endpoint and the background scheduler.
+
+    When *trades* and *positions* are provided (pre-parsed by the nightly job that
+    already fetched the Flex report for another purpose) the fetch step is skipped,
+    saving one IBKR API call.  If either is absent the report is fetched fresh using
+    *ibkr_token* / *ibkr_query_id*.
+    """
+    if trades is None or positions is None:
+        xml_content = fetch_flex_report(ibkr_token, ibkr_query_id)
+        trades      = parse_trades_from_xml(xml_content)
+        positions   = parse_positions_from_xml(xml_content)
     leap_positions = parse_leap_positions(positions)
 
     if not leap_positions:
