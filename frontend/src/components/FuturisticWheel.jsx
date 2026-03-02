@@ -285,6 +285,16 @@ function FuturisticWheel({ onLogout }) {
               {leaps.total_delta != null ? leaps.total_delta.toFixed(2) : '—'}
             </span>
           </div>
+          <div className="fw-tile">
+            <span className="fw-tile-icon">➕</span>
+            <span className="fw-tile-label">Extra Contracts</span>
+            <span className="fw-tile-value fw-green">{leaps.extra_contracts ?? 0}</span>
+          </div>
+          <div className="fw-tile">
+            <span className="fw-tile-icon">💎</span>
+            <span className="fw-tile-label">Value of Extra Contracts</span>
+            <span className="fw-tile-value fw-green">{fmt$(leaps.extra_contracts_value)}</span>
+          </div>
         </div>
 
         {/* Delta input (one row per LEAP symbol) */}
@@ -418,9 +428,11 @@ function FuturisticWheel({ onLogout }) {
         {/* Stats tiles — 5 columns */}
         <div className="fw-grid fw-grid-5">
           <div className="fw-tile">
-            <span className="fw-tile-icon">💵</span>
-            <span className="fw-tile-label">Total Premium</span>
-            <span className="fw-tile-value fw-green">{fmt$(short_calls.stats.total_premium)}</span>
+            <span className="fw-tile-icon">�</span>
+            <span className="fw-tile-label">Total P&L</span>
+            <span className={`fw-tile-value ${short_calls.stats.total_pnl >= 0 ? 'fw-green' : 'fw-red'}`}>
+              {fmt$(short_calls.stats.total_pnl)}
+            </span>
           </div>
           <div className="fw-tile">
             <span className="fw-tile-icon">💰</span>

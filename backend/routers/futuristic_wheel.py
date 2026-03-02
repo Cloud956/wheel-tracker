@@ -95,15 +95,36 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
         date_map[d]['total_contracts'] += int(s.get('contracts', 0))
     leap_series = sorted(date_map.values(), key=lambda x: x['date'])
 
+    # ── Extra contracts (growth since strategy inception) ─────────────────────
+    baseline_contracts = leap_series[0]['total_contracts'] if leap_series else 0
+    extra_contracts = total_contracts - baseline_contracts
+    total_market_value = round(sum(
+        l.get('contracts', 0) * l.get('mark_price', 0.0) * l.get('multiplier', 100.0)
+        for l in latest_leaps
+    ), 2)
+    extra_contracts_value = round(
+        (extra_contracts / total_contracts * total_market_value) if total_contracts > 0 else 0.0, 2
+    )
+
     # ── Short call stats ──────────────────────────────────────────────────────
     closed_calls = [c for c in short_calls if c.get('status') in ('closed', 'expired')]
     open_calls   = [c for c in short_calls if c.get('status') == 'open']
-    total_premium = round(sum(c.get('premium_received', 0.0) for c in short_calls), 2)
     closed_pnls   = [c['pnl'] for c in closed_calls if c.get('pnl') is not None]
     wins          = [p for p in closed_pnls if p > 0]
     win_rate      = round(len(wins) / len(closed_pnls) * 100, 1) if closed_pnls else 0
     total_realized = round(sum(closed_pnls), 2)
     avg_pnl        = round(total_realized / len(closed_pnls), 2) if closed_pnls else 0
+
+    # Open call unrealized P&L: premium received minus current cost-to-close
+    open_current_value = round(sum(
+        c.get('mark_price', 0.0) * c.get('contracts', 0) * 100.0
+        for c in open_calls if c.get('mark_price') is not None
+    ), 2)
+    open_unrealized_pnl = round(sum(
+        (c.get('open_price', 0.0) - c.get('mark_price', 0.0)) * c.get('contracts', 0) * 100.0
+        for c in open_calls if c.get('mark_price') is not None
+    ), 2)
+    total_pnl = round(total_realized + open_unrealized_pnl, 2)
 
     # ── Daily P&L series (from START_DATE, gap-filled to today) ─────────────
     # Bucket realised PnL by close date
@@ -144,16 +165,21 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
             'total_unrealized_pnl': total_unrealized,
             'total_delta':         total_delta,
             'pmcc_deltas':         pmcc_deltas,
+            'baseline_contracts':  baseline_contracts,
+            'extra_contracts':     extra_contracts,
+            'extra_contracts_value': extra_contracts_value,
         },
         'short_calls': {
             'all':  sorted(short_calls, key=lambda x: x.get('open_date', ''), reverse=True),
             'stats': {
-                'total_premium':     total_premium,
+                'total_pnl':          total_pnl,
                 'total_realized_pnl': total_realized,
-                'win_rate':          win_rate,
-                'avg_pnl':           avg_pnl,
-                'closed_count':      len(closed_calls),
-                'open_count':        len(open_calls),
+                'open_unrealized_pnl': open_unrealized_pnl,
+                'open_current_value': open_current_value,
+                'win_rate':           win_rate,
+                'avg_pnl':            avg_pnl,
+                'closed_count':       len(closed_calls),
+                'open_count':         len(open_calls),
             },
             'daily_pnl_series': daily_pnl_series,
         },
@@ -183,6 +209,21 @@ def _do_pmcc_sync(email: str, ibkr_token: str, ibkr_query_id: str) -> dict:
     save_pmcc_leap_snapshot(email, today, leap_positions)
 
     short_calls = build_pmcc_short_calls(trades, leap_symbols)
+
+    # Enrich open short calls with current mark price from today's positions
+    short_call_marks = {
+        (p['symbol'], p.get('strike')): p.get('mark_price', 0.0)
+        for p in positions
+        if p.get('asset_category') == 'OPT'
+        and p.get('put_call') == 'C'
+        and float(p.get('position', 0)) < 0
+    }
+    for call in short_calls:
+        if call.get('status') == 'open':
+            key = (call['symbol'], call.get('strike'))
+            if key in short_call_marks:
+                call['mark_price'] = short_call_marks[key]
+
     calls_saved = save_pmcc_short_calls(email, short_calls) if short_calls else 0
 
     return {
