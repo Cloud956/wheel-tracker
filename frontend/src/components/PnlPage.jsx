@@ -13,8 +13,6 @@ function PnlPage({ onLogout }) {
   const [pnlData, setPnlData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [showActivateModal, setShowActivateModal] = useState(false);
-  const [activating, setActivating] = useState(false);
 
   useEffect(() => {
     fetchPnlData();
@@ -42,31 +40,6 @@ function PnlPage({ onLogout }) {
     }
   };
 
-  const handleActivate = async () => {
-    try {
-      setActivating(true);
-      const token = Cookies.get('token');
-      if (!token) { onLogout(); return; }
-
-      const resp = await fetch(`${API_BASE}/activate-daily-mode`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (resp.status === 401) { onLogout(); return; }
-      const data = await resp.json();
-      if (!resp.ok) {
-        alert('Activation Failed: ' + (data.detail || 'Unknown error'));
-      } else {
-        setShowActivateModal(false);
-        alert('✅ Daily mode activated. All data has been purged. Syncs will now run at 3 AM CET.');
-      }
-    } catch (e) {
-      alert('Activation Error: ' + e.message);
-    } finally {
-      setActivating(false);
-    }
-  };
-
   // Stats derived from data
   const totalPnl = pnlData.length ? pnlData[pnlData.length - 1]?.cumulative_pnl ?? 0 : 0;
   const bestDay = pnlData.length ? Math.max(...pnlData.map(d => d.daily_pnl)) : 0;
@@ -90,9 +63,6 @@ function PnlPage({ onLogout }) {
       <div className="pnl-header">
         <button className="back-btn" onClick={() => navigate('/')}>← Home</button>
         <h1>📈 PnL Tracker</h1>
-        <button className="activate-btn" onClick={() => setShowActivateModal(true)}>
-          ⚡ Activate Daily Mode
-        </button>
       </div>
 
       {/* Stats row */}
@@ -128,7 +98,7 @@ function PnlPage({ onLogout }) {
           <div className="pnl-placeholder">
             <span>📊</span>
             <p>No PnL data available yet.</p>
-            <p className="pnl-placeholder-sub">Activate daily mode and data will appear here after the first nightly sync.</p>
+            <p className="pnl-placeholder-sub">Data will appear here after the first nightly sync.</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={360}>
@@ -163,29 +133,6 @@ function PnlPage({ onLogout }) {
         )}
       </div>
 
-      {/* Activate Modal */}
-      {showActivateModal && (
-        <div className="modal-overlay" onClick={() => setShowActivateModal(false)}>
-          <div className="modal-box" onClick={e => e.stopPropagation()}>
-            <h2>⚡ Activate Daily Mode</h2>
-            <div className="modal-warning">⚠️ Before activating, make sure you set the Flex Query to <strong>daily</strong>.</div>
-            <p>If activated:</p>
-            <ul>
-              <li>All stored wheel data will be <strong>permanently purged</strong>.</li>
-              <li>The application will run on an <strong>automatic sync schedule at 3 AM CET</strong>.</li>
-            </ul>
-            <p className="modal-confirm-text">Are you sure you want to continue?</p>
-            <div className="modal-actions">
-              <button className="modal-btn modal-btn-cancel" onClick={() => setShowActivateModal(false)}>
-                Cancel
-              </button>
-              <button className="modal-btn modal-btn-confirm" onClick={handleActivate} disabled={activating}>
-                {activating ? 'Activating...' : 'Yes, Activate'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

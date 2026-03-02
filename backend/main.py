@@ -75,8 +75,13 @@ def auto_nightly_sync_job():
          report, then compute and persist the daily PnL snapshot.
     """
     from routers.futuristic_wheel import _do_pmcc_sync
-    today = datetime.utcnow().strftime('%Y-%m-%d')
-    print(f'[NightlySync] Starting nightly sync for {today}...')
+    from datetime import timedelta
+    now       = datetime.utcnow()
+    today     = now.strftime('%Y-%m-%d')
+    # The Flex report fetched at 02:00 CET always reflects the *previous* trading
+    # day's close, so we label the PnL snapshot with yesterday's date.
+    yesterday = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    print(f'[NightlySync] Starting nightly sync — snapshotting PnL for {yesterday}...')
 
     try:
         users = get_all_users()
@@ -123,7 +128,7 @@ def auto_nightly_sync_job():
             if positions is not None:
                 wheels = enrich_wheels_with_positions(wheels, positions)
                 save_wheels(email, [w.dict() for w in wheels])
-            _snapshot_daily_pnl(email, wheels, today)
+            _snapshot_daily_pnl(email, wheels, yesterday)
         except Exception as e:
             print(f'[NightlySync] Daily PnL ERROR for {email}: {e}')
 
@@ -283,29 +288,6 @@ def get_pnl(user: dict = Depends(verify_token)):
     email = user.get('email')
     records = get_daily_pnl(email)
     return records
-
-
-@app.post("/activate-daily-mode")
-def activate_daily_mode(user: dict = Depends(verify_token)):
-    """
-    Activates daily mode:
-    - Purges all stored wheel data for the user.
-    - Sets the daily_mode flag in the user config.
-    The actual 3 AM CET sync schedule is handled separately at the infrastructure level.
-    """
-    email = user.get('email')
-
-    # 1. Purge all wheel data
-    deleted = delete_user_wheels(email)
-
-    # 2. Mark daily_mode active in user config
-    from database import update_user_config
-    update_user_config(email, {'daily_mode': True})
-
-    return {
-        "status": "success",
-        "message": f"Daily mode activated. {deleted} wheels purged.",
-    }
 
 
 @app.get("/analytics")
