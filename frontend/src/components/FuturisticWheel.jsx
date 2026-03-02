@@ -428,7 +428,7 @@ function FuturisticWheel({ onLogout }) {
         {/* Stats tiles — 5 columns */}
         <div className="fw-grid fw-grid-5">
           <div className="fw-tile">
-            <span className="fw-tile-icon">�</span>
+            <span className="fw-tile-icon">📈</span>
             <span className="fw-tile-label">Total P&L</span>
             <span className={`fw-tile-value ${short_calls.stats.total_pnl >= 0 ? 'fw-green' : 'fw-red'}`}>
               {fmt$(short_calls.stats.total_pnl)}
@@ -468,7 +468,7 @@ function FuturisticWheel({ onLogout }) {
 
             {/* Cumulative P&L area chart */}
             <div className="fw-card" style={{ marginBottom: 0 }}>
-              <h3>Cumulative Premium (from 20 Feb)</h3>
+              <h3>Cumulative Total P&L (from 20 Feb)</h3>
               <ResponsiveContainer width="100%" height={230}>
                 <AreaChart data={short_calls.daily_pnl_series} margin={{ top: 6, right: 16, left: 0, bottom: 0 }}>
                   <defs>

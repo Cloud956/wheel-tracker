@@ -149,10 +149,12 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
         ds        = cursor.strftime('%Y-%m-%d')
         day_pnl   = daily_map.get(ds, 0.0)
         cumulative = round(cumulative + day_pnl, 2)
+        # On today's point, fold in open unrealized so chart tip == Total P&L tile
+        displayed_cumulative = round(cumulative + open_unrealized_pnl, 2) if cursor == today_d else cumulative
         daily_pnl_series.append({
             'date':           ds,
             'daily_pnl':      round(day_pnl, 2),
-            'cumulative_pnl': cumulative,
+            'cumulative_pnl': displayed_cumulative,
         })
         cursor += timedelta(days=1)
 
