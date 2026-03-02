@@ -53,6 +53,10 @@ const TradeHistoryTable = ({ data }) => {
         accessorKey: 'price',
         header: 'Price',
         enableSorting: true,
+        cell: ({ getValue }) => {
+          const price = getValue()
+          return <span>{price?.value ?? price ?? '—'}</span>
+        },
       },
       {
         accessorKey: 'comm',
