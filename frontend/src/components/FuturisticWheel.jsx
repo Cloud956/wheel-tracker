@@ -614,34 +614,56 @@ function FuturisticWheel({ onLogout }) {
                     <th>Closed / Expired</th>
                     <th>Close Price</th>
                     <th>Premium</th>
+                    <th>Current Mark</th>
+                    <th>Current Value</th>
                     <th>P&L</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {short_calls.all.map((c, i) => (
-                    <tr key={i}>
-                      <td>{c.symbol}</td>
-                      <td>{c.strike ?? '—'}</td>
-                      <td>{fmtDate(c.expiry)}</td>
-                      <td>{c.contracts}</td>
-                      <td>{fmtDate(c.open_date)}</td>
-                      <td>{fmt$(c.open_price)}</td>
-                      <td>{c.close_date ? fmtDate(c.close_date) : '—'}</td>
-                      <td>
-                        {c.close_price != null && c.status !== 'expired'
-                          ? fmt$(c.close_price)
-                          : c.status === 'expired' ? 'Expired' : '—'}
-                      </td>
-                      <td className="fw-green">{fmt$(c.premium_received)}</td>
-                      <td className={c.pnl != null ? (c.pnl >= 0 ? 'fw-green' : 'fw-red') : ''}>
-                        {c.pnl != null ? fmt$(c.pnl) : '—'}
-                      </td>
-                      <td>
-                        <span className={`fw-badge fw-badge-${c.status}`}>{c.status}</span>
-                      </td>
-                    </tr>
-                  ))}
+                  {short_calls.all.map((c, i) => {
+                    const isOpen = c.status === 'open';
+                    const currentMark = isOpen && c.mark_price != null ? c.mark_price : null;
+                    const currentValue = currentMark != null
+                      ? currentMark * c.contracts * 100
+                      : null;
+                    const unrealizedPnl = currentMark != null
+                      ? (c.open_price - currentMark) * c.contracts * 100
+                      : null;
+                    return (
+                      <tr key={i}>
+                        <td>{c.symbol}</td>
+                        <td>{c.strike ?? '—'}</td>
+                        <td>{fmtDate(c.expiry)}</td>
+                        <td>{c.contracts}</td>
+                        <td>{fmtDate(c.open_date)}</td>
+                        <td>{fmt$(c.open_price)}</td>
+                        <td>{c.close_date ? fmtDate(c.close_date) : '—'}</td>
+                        <td>
+                          {c.close_price != null && c.status !== 'expired'
+                            ? fmt$(c.close_price)
+                            : c.status === 'expired' ? 'Expired' : '—'}
+                        </td>
+                        <td className="fw-green">{fmt$(c.premium_received)}</td>
+                        <td className={currentMark != null ? 'fw-yellow' : ''}>
+                          {currentMark != null ? fmt$(currentMark) : '—'}
+                        </td>
+                        <td className={
+                          unrealizedPnl != null
+                            ? (unrealizedPnl >= 0 ? 'fw-green' : 'fw-red')
+                            : ''
+                        }>
+                          {unrealizedPnl != null ? fmt$(unrealizedPnl) : '—'}
+                        </td>
+                        <td className={c.pnl != null ? (c.pnl >= 0 ? 'fw-green' : 'fw-red') : ''}>
+                          {c.pnl != null ? fmt$(c.pnl) : (unrealizedPnl != null ? fmt$(unrealizedPnl) : '—')}
+                        </td>
+                        <td>
+                          <span className={`fw-badge fw-badge-${c.status}`}>{c.status}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

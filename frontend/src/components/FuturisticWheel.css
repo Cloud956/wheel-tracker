@@ -312,6 +312,8 @@
 .fw-red    { color: #ff4444; }
 .fw-purple { color: #a855f7; }
 .fw-blue   { color: #4488ff; }
+.fw-yellow { color: #f0c040; }
+.fw-cyan   { color: #00d4ff; }
 
 /* ── Loading / error ── */
 .fw-center {
@@ -366,5 +368,3 @@
 }
 .fw-market-btn:hover    { background: #0284c7; }
 .fw-market-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.fw-cyan { color: #22d3ee; }

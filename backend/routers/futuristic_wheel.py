@@ -66,7 +66,12 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
     latest_leaps = []
     if snapshots:
         latest_date  = max(s.get('snapshot_date', '') for s in snapshots)
-        latest_leaps = [s for s in snapshots if s.get('snapshot_date') == latest_date]
+        # Exclude the _SHORT_CALLS_ sentinel row — it's only used for the graph
+        latest_leaps = [
+            s for s in snapshots
+            if s.get('snapshot_date') == latest_date
+            and s.get('symbol') != '_SHORT_CALLS_'
+        ]
         for leap in latest_leaps:
             sym   = leap.get('symbol', '')
             delta = pmcc_deltas.get(sym)
@@ -74,37 +79,6 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
                 leap['delta']       = delta
                 leap['total_delta'] = round(leap.get('contracts', 0) * 100.0 * delta, 2)
 
-    total_contracts     = sum(l.get('contracts', 0) for l in latest_leaps)
-    total_cost          = round(sum(
-        l.get('contracts', 0) * l.get('cost_basis', 0.0) * l.get('multiplier', 100.0)
-        for l in latest_leaps
-    ), 2)
-    total_unrealized    = round(sum(l.get('unrealized_pnl', 0.0) for l in latest_leaps), 2)
-    total_delta         = None
-    if latest_leaps and all(l.get('delta') is not None for l in latest_leaps):
-        total_delta = round(sum(l.get('total_delta', 0.0) for l in latest_leaps), 2)
-
-    # ── LEAP contract count time-series ──────────────────────────────────────
-    date_map: dict = {}
-    for s in snapshots:
-        d = s.get('snapshot_date', '')
-        if not d:
-            continue
-        if d not in date_map:
-            date_map[d] = {'date': d, 'total_contracts': 0}
-        date_map[d]['total_contracts'] += int(s.get('contracts', 0))
-    leap_series = sorted(date_map.values(), key=lambda x: x['date'])
-
-    # ── Extra contracts (growth since strategy inception) ─────────────────────
-    baseline_contracts = leap_series[0]['total_contracts'] if leap_series else 0
-    extra_contracts = total_contracts - baseline_contracts
-    total_market_value = round(sum(
-        l.get('contracts', 0) * l.get('mark_price', 0.0) * l.get('multiplier', 100.0)
-        for l in latest_leaps
-    ), 2)
-    extra_contracts_value = round(
-        (extra_contracts / total_contracts * total_market_value) if total_contracts > 0 else 0.0, 2
-    )
 
     # ── Short call stats ──────────────────────────────────────────────────────
     closed_calls = [c for c in short_calls if c.get('status') in ('closed', 'expired')]
@@ -124,7 +98,42 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
         (c.get('open_price', 0.0) - c.get('mark_price', 0.0)) * c.get('contracts', 0) * 100.0
         for c in open_calls if c.get('mark_price') is not None
     ), 2)
-    total_pnl = round(total_realized + open_unrealized_pnl, 2)
+    total_contracts     = sum(l.get('contracts', 0) for l in latest_leaps)
+    total_cost          = round(sum(
+        l.get('contracts', 0) * l.get('cost_basis', 0.0) * l.get('multiplier', 100.0)
+        for l in latest_leaps
+    ), 2)
+    total_unrealized    = round(sum(l.get('unrealized_pnl', 0.0) for l in latest_leaps) + open_unrealized_pnl, 2)
+    total_delta         = None
+    if latest_leaps and all(l.get('delta') is not None for l in latest_leaps):
+        total_delta = round(sum(l.get('total_delta', 0.0) for l in latest_leaps), 2)
+
+    # ── LEAP contract count time-series ──────────────────────────────────────
+    date_map: dict = {}
+    for s in snapshots:
+        if s.get('symbol') == '_SHORT_CALLS_':
+            continue   # sentinel row — not a real LEAP position
+        d = s.get('snapshot_date', '')
+        if not d:
+            continue
+        if d not in date_map:
+            date_map[d] = {'date': d, 'total_contracts': 0}
+        date_map[d]['total_contracts'] += int(s.get('contracts', 0))
+    leap_series = sorted(date_map.values(), key=lambda x: x['date'])
+
+    # ── Extra contracts (growth since strategy inception) ─────────────────────
+    baseline_contracts = leap_series[0]['total_contracts'] if leap_series else 0
+    extra_contracts = total_contracts - baseline_contracts
+    total_market_value = round(sum(
+        l.get('contracts', 0) * l.get('mark_price', 0.0) * l.get('multiplier', 100.0)
+        for l in latest_leaps
+    ), 2)
+    extra_contracts_value = round(
+        (extra_contracts / total_contracts * total_market_value) if total_contracts > 0 else 0.0, 2
+    )
+
+
+    total_pnl = round(total_realized + total_unrealized, 2)
 
     # ── Daily P&L series (from START_DATE, gap-filled to today) ─────────────
     # Bucket realised PnL by close date
@@ -140,17 +149,39 @@ def get_futuristic_wheel(user: dict = Depends(verify_token)):
         daily_map[close_dt] = round(daily_map.get(close_dt, 0.0) + pnl, 2)
 
     # Walk every calendar day from START_DATE to today, carrying cumulative forward
+    # Map total unrealized P&L (LEAP + short-call) by snapshot date.
+    # _SHORT_CALLS_ rows carry the short-call unrealized saved at each sync,
+    # so summing all rows per date gives the full daily unrealized automatically.
+    snapshot_unrealized = {}
+    for s in snapshots:
+        d = s.get('snapshot_date', '')
+        if d:
+            snapshot_unrealized[d] = round(
+                snapshot_unrealized.get(d, 0.0) + float(s.get('unrealized_pnl', 0.0)), 2
+            )
+
     start_d = _date(int(START_DATE[:4]), int(START_DATE[5:7]), int(START_DATE[8:10]))
     today_d  = _date.today()
     daily_pnl_series = []
     cumulative = 0.0
     cursor = start_d
+    last_leap_u = 0.0
     while cursor <= today_d:
         ds        = cursor.strftime('%Y-%m-%d')
         day_pnl   = daily_map.get(ds, 0.0)
         cumulative = round(cumulative + day_pnl, 2)
-        # On today's point, fold in open unrealized so chart tip == Total P&L tile
-        displayed_cumulative = round(cumulative + open_unrealized_pnl, 2) if cursor == today_d else cumulative
+        
+        # Keep track of latest known LEAP unrealized PnL
+        if ds in snapshot_unrealized:
+             last_leap_u = snapshot_unrealized[ds]
+             
+        # Held positions open PnL
+        leap_u_to_add = last_leap_u
+        if cursor == today_d:
+             leap_u_to_add = total_unrealized
+        
+        # On today's point, fold in open short call unrealized so chart tip == Total P&L tile
+        displayed_cumulative = round(cumulative + leap_u_to_add, 2)
         daily_pnl_series.append({
             'date':           ds,
             'daily_pnl':      round(day_pnl, 2),
@@ -222,7 +253,6 @@ def _do_pmcc_sync(
 
     leap_symbols = {lp['symbol'] for lp in leap_positions}
     today        = datetime.utcnow().strftime('%Y-%m-%d')
-    save_pmcc_leap_snapshot(email, today, leap_positions)
 
     short_calls = build_pmcc_short_calls(trades, leap_symbols)
 
@@ -239,6 +269,29 @@ def _do_pmcc_sync(
             key = (call['symbol'], call.get('strike'))
             if key in short_call_marks:
                 call['mark_price'] = short_call_marks[key]
+
+    # ── Save LEAP snapshots + daily short-call unrealized snapshot ────────────
+    # The _SHORT_CALLS_ sentinel row stores the total unrealized P&L of all open
+    # short calls at the time of this sync.  It is stored in the same
+    # pmcc_leap_snapshots table (symbol='_SHORT_CALLS_') so the cumulative P&L
+    # chart can include the daily change in short-call unrealized — smoothing the
+    # graph between trade-close events.
+    short_call_unrealized = round(sum(
+        (c.get('open_price', 0.0) - c.get('mark_price', 0.0))
+        * c.get('contracts', 0) * 100.0
+        for c in short_calls
+        if c.get('status') == 'open' and c.get('mark_price') is not None
+    ), 2)
+    save_pmcc_leap_snapshot(email, today, leap_positions + [{
+        'symbol':        '_SHORT_CALLS_',
+        'contracts':     0,
+        'mark_price':    0.0,
+        'unrealized_pnl': short_call_unrealized,
+        'cost_basis':    0.0,
+        'multiplier':    1.0,
+        'strike':        None,
+        'expiry':        None,
+    }])
 
     calls_saved = save_pmcc_short_calls(email, short_calls) if short_calls else 0
 
